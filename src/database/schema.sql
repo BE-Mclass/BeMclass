@@ -39,6 +39,24 @@ CREATE TABLE IF NOT EXISTS student_roster (
   CONSTRAINT fk_roster_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS announcements (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  category ENUM('academic', 'activity', 'holiday', 'important', 'achievement', 'info') NOT NULL,
+  title VARCHAR(200) NOT NULL,
+  publish_date DATE NOT NULL,
+  target_audience ENUM('all', 'siswa', 'guru', 'wali') NOT NULL,
+  priority ENUM('low', 'normal', 'important', 'urgent') NOT NULL,
+  description TEXT NOT NULL,
+  status ENUM('draft', 'published') NOT NULL DEFAULT 'draft',
+  created_by BIGINT UNSIGNED NULL,
+  published_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_announcements_status_date (status, publish_date),
+  INDEX idx_announcements_audience_status (target_audience, status),
+  CONSTRAINT fk_announcements_author FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS user_sessions (
   id CHAR(36) PRIMARY KEY COMMENT 'UUID v4 (JWT jti)',
   user_id BIGINT UNSIGNED NOT NULL,

@@ -73,7 +73,7 @@ Tujuan bisnis & metrik: lihat `01_MRD.md` §3.
 | W-GPS | Monitoring radius GPS: siswa terpantau vs di luar radius | P0 |
 | W-EXP | Export laporan Excel | P0 |
 | W-CAL | Kalender: total agenda, agenda penting, libur nasional, agenda berlangsung | P0 |
-| W-ANN | Buat pengumuman (jenis, judul, tanggal, target, prioritas, deskripsi) | P0 |
+| W-ANN | CRUD pengumuman (jenis, judul, tanggal, target, prioritas, deskripsi, status) | P0 |
 | W-SET | Pengaturan akun: profil, foto (ganti/hapus), log sesi, ganti sandi, simpan | P0 |
 | W-LEAVE | Persetujuan surat izin siswa | P0 *(UI belum ada — FC-05)* |
 | W-OUT | Logout | P0 |
@@ -225,11 +225,13 @@ Presensi wajah bersifat **otomatis**: begitu wajah cocok dengan data referensi, 
 - **AC1** Kartu: total agenda bulan ini, agenda penting, libur nasional, agenda berlangsung.
 - **AC2** Grid bulanan menandai tanggal dengan agenda/libur dan hari ini.
 
-**US-51 — Buat pengumuman (Web)** · P0
+**US-51 — Pengumuman (Web)** · P0
 - **AC1** Form: jenis (Akademik/Kegiatan/Libur-Cuti/Penting/Prestasi/Info), judul, tanggal, target (Semua/Siswa/Guru — `guru` mencakup admin), prioritas (Rendah/Normal/Penting/Urgent), deskripsi.
-- **AC2** Konfirmasi sebelum terbitkan; setelah terbit, muncul di dashboard, kalender, dan mobile siswa sesuai target.
-- **AC3** Pengumuman jenis `libur` menandai hari tersebut **bukan hari sekolah** (tidak ada alpa otomatis).
-- **AC4** Target `wali` diterima & disimpan tetapi tidak menghasilkan notifikasi (D-13).
+- **AC2** Admin/guru dapat melihat, membuat, mengubah, dan menghapus pengumuman setelah login; permintaan tanpa sesi ditolak (401) dan role selain admin/guru tidak dapat mengubah data (403).
+- **AC3** Field wajib yang kosong/tidak valid tidak disimpan; API mengembalikan 400 dengan error per field. Tanggal memakai format `YYYY-MM-DD`; pengumuman dapat disimpan sebagai `draft` atau `published` (aksi terbitkan tanpa status eksplisit membuatnya `published`).
+- **AC4** Konfirmasi sebelum terbitkan; setelah terbit, muncul di dashboard, kalender, dan mobile siswa sesuai target.
+- **AC5** Pengumuman jenis `libur` menandai hari tersebut **bukan hari sekolah** (tidak ada alpa otomatis).
+- **AC6** Target `wali` diterima & disimpan tetapi tidak menghasilkan notifikasi (D-13).
 
 **US-52 — Kalender & pengumuman (Mobile)** · P0
 - **AC** Siswa melihat agenda (UTS/UAS/libur/dll.), pengumuman sekolah & kelasnya, detail pengumuman; kalender juga menandai status kehadirannya.

@@ -44,16 +44,16 @@ interface DbUserWithStudentRow extends RowDataPacket {
 }
 
 export interface WebLoginInput {
-  email: string;
-  password: string;
-  rememberMe?: boolean;
+  email: unknown;
+  password: unknown;
+  rememberMe?: unknown;
   userAgent?: string;
   ipAddress?: string;
 }
 
 export interface MobileLoginInput {
-  identifier: string; // email or 10-digit NISN
-  password: string;
+  identifier: unknown; // email or 10-digit NISN
+  password: unknown;
   userAgent?: string;
   ipAddress?: string;
 }
@@ -161,15 +161,30 @@ async function createSessionAndToken(params: {
  * US-01 — Admin/Guru login (Web)
  */
 export async function loginWeb(input: WebLoginInput) {
-  const email = (input.email ?? "").trim().toLowerCase();
-  const password = input.password ?? "";
-  const rememberMe = Boolean(input.rememberMe);
-
-  if (!email || !password) {
-    throw new AppError("Login gagal! Email atau kata sandi salah.", 401, {
-      code: "INVALID_CREDENTIALS",
+  const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
+  const password = typeof input.password === "string" ? input.password : "";
+  const errors: Record<string, string> = {};
+  if (!email) {
+    errors.email = "Email wajib diisi.";
+  } else if (!EMAIL_REGEX.test(email)) {
+    errors.email = "Format email tidak valid.";
+  }
+  if (!password.trim()) {
+    errors.password = "Kata sandi wajib diisi.";
+  }
+  if (
+    input.rememberMe !== undefined &&
+    typeof input.rememberMe !== "boolean"
+  ) {
+    errors.remember_me = "Nilai ingat perangkat harus berupa boolean.";
+  }
+  if (Object.keys(errors).length > 0) {
+    throw new AppError("Validasi login gagal.", 400, {
+      code: "VALIDATION_ERROR",
+      errors,
     });
   }
+  const rememberMe = input.rememberMe === true;
 
   const [rows] = await database.execute<DbUserWithStudentRow[]>(
     `SELECT u.id, u.name, u.email, u.password_hash, u.role, u.is_active, u.photo_url
@@ -233,12 +248,21 @@ export async function loginWeb(input: WebLoginInput) {
  * Identitas dapat berupa email atau NISN 10 digit + sandi
  */
 export async function loginMobile(input: MobileLoginInput) {
-  const identifier = (input.identifier ?? "").trim();
-  const password = input.password ?? "";
+  const identifier =
+    typeof input.identifier === "string" ? input.identifier.trim() : "";
+  const password = typeof input.password === "string" ? input.password : "";
 
-  if (!identifier || !password) {
-    throw new AppError("Login gagal! Email/NISN atau kata sandi salah.", 401, {
-      code: "INVALID_CREDENTIALS",
+  const errors: Record<string, string> = {};
+  if (!identifier) {
+    errors.identifier = "Email atau NISN wajib diisi.";
+  }
+  if (!password.trim()) {
+    errors.password = "Kata sandi wajib diisi.";
+  }
+  if (Object.keys(errors).length > 0) {
+    throw new AppError("Validasi login gagal.", 400, {
+      code: "VALIDATION_ERROR",
+      errors,
     });
   }
 
@@ -310,16 +334,22 @@ export async function loginMobile(input: MobileLoginInput) {
  * US-03 — Register siswa (Mobile)
  */
 export async function registerStudent(input: StudentRegisterInput) {
-  const name = (input.name ?? "").trim();
-  const nisn = (input.nisn ?? "").trim();
-  const email = (input.email ?? "").trim().toLowerCase();
-  const password = input.password ?? "";
-  const passwordConfirmation = input.passwordConfirmation ?? "";
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+  const nisn = typeof input.nisn === "string" ? input.nisn.trim() : "";
+  const email =
+    typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
+  const password = typeof input.password === "string" ? input.password : "";
+  const passwordConfirmation =
+    typeof input.passwordConfirmation === "string"
+      ? input.passwordConfirmation
+      : "";
 
   const errors: Record<string, string> = {};
 
   if (!name) {
     errors.name = "Nama wajib diisi.";
+  } else if (name.length > 150) {
+    errors.name = "Nama maksimal 150 karakter.";
   }
 
   if (!nisn) {
@@ -542,45 +572,104 @@ export async function listUserSessions(
  */
 export async function updateProfile(
   user: AuthenticatedUser,
-  payload: {
-    name?: string;
-    email?: string;
-    whatsapp_number?: string;
-    address?: string;
-  }
+  payload: unknown
 ): Promise<AuthenticatedUser> {
-  if (user.role === "siswa") {
-    const whatsappNumber =
-      payload.whatsapp_number !== undefined
-        ? payload.whatsapp_number.trim()
-        : undefined;
-    const address =
-      payload.address !== undefined ? payload.address.trim() : undefined;
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    Array.isArray(payload)
+  ) {
+    throw new AppError("Data profil harus berupa objek.", 400, {
+      code: "VALIDATION_ERROR",
+      errors: { _form: "Data profil tidak valid." },
+    });
+  }
+  const body = payload as Record<string, unknown>;
+  const hasField = (field: string) =>
+    Object.prototype.hasOwnProperty.call(body, field);
 
-    if (whatsappNumber === undefined && address === undefined) {
+  if (user.role === "siswa") {
+    const errors: Record<string, string> = {};
+    const hasWhatsappNumber = hasField("whatsapp_number");
+    const hasAddress = hasField("address");
+    const whatsappNumber = body.whatsapp_number;
+    const address = body.address;
+
+    if (!hasWhatsappNumber && !hasAddress) {
       throw new AppError(
         "Tidak ada perubahan profil yang dikirim (whatsapp_number / address).",
-        400
+        400,
+        {
+          code: "VALIDATION_ERROR",
+          errors: { _form: "Isi minimal satu data yang akan diperbarui." },
+        }
       );
+    }
+
+    for (const [field, value, maxLength] of [
+      ["whatsapp_number", whatsappNumber, 30],
+      ["address", address, 16000],
+    ] as const) {
+      if (!hasField(field)) {
+        continue;
+      }
+      if (value !== null && typeof value !== "string") {
+        errors[field] = "Nilai harus berupa teks.";
+      } else if (typeof value === "string" && value.trim().length > maxLength) {
+        errors[field] = `Maksimal ${maxLength} karakter.`;
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      throw new AppError("Validasi profil gagal.", 400, {
+        code: "VALIDATION_ERROR",
+        errors,
+      });
     }
 
     await database.execute(
       `UPDATE student_roster
-       SET whatsapp_number = COALESCE(?, whatsapp_number),
-           address = COALESCE(?, address)
+       SET whatsapp_number = CASE WHEN ? THEN ? ELSE whatsapp_number END,
+           address = CASE WHEN ? THEN ? ELSE address END
        WHERE user_id = ?`,
-      [whatsappNumber ?? null, address ?? null, user.id]
+      [
+        hasWhatsappNumber ? 1 : 0,
+        typeof whatsappNumber === "string" ? whatsappNumber.trim() || null : null,
+        hasAddress ? 1 : 0,
+        typeof address === "string" ? address.trim() || null : null,
+        user.id,
+      ]
     );
   } else {
     const errors: Record<string, string> = {};
-    const name = payload.name !== undefined ? payload.name.trim() : user.name;
+    const hasName = hasField("name");
+    const hasEmail = hasField("email");
+    if (!hasName && !hasEmail) {
+      throw new AppError("Tidak ada perubahan profil yang dikirim.", 400, {
+        code: "VALIDATION_ERROR",
+        errors: { _form: "Isi minimal nama atau email." },
+      });
+    }
+
+    const nameValue = body.name;
+    const emailValue = body.email;
+    const name =
+      !hasName
+        ? user.name
+        : typeof nameValue === "string"
+          ? nameValue.trim()
+          : "";
     const email =
-      payload.email !== undefined
-        ? payload.email.trim().toLowerCase()
-        : user.email;
+      !hasEmail
+        ? user.email
+        : typeof emailValue === "string"
+          ? emailValue.trim().toLowerCase()
+          : "";
 
     if (!name) {
       errors.name = "Nama wajib diisi.";
+    } else if (name.length > 150) {
+      errors.name = "Nama maksimal 150 karakter.";
     }
     if (!email || !EMAIL_REGEX.test(email)) {
       errors.email = "Format email tidak valid.";
@@ -637,27 +726,32 @@ export async function updateProfile(
 export async function changePassword(params: {
   userId: number;
   currentSessionId: string;
-  currentPassword: string;
-  newPassword: string;
-  newPasswordConfirmation: string;
+  currentPassword: unknown;
+  newPassword: unknown;
+  newPasswordConfirmation: unknown;
 }): Promise<void> {
-  const {
-    userId,
-    currentSessionId,
-    currentPassword,
-    newPassword,
-    newPasswordConfirmation,
-  } = params;
+  const { userId, currentSessionId } = params;
+  const currentPassword =
+    typeof params.currentPassword === "string" ? params.currentPassword : "";
+  const newPassword =
+    typeof params.newPassword === "string" ? params.newPassword : "";
+  const newPasswordConfirmation =
+    typeof params.newPasswordConfirmation === "string"
+      ? params.newPasswordConfirmation
+      : "";
 
   const errors: Record<string, string> = {};
-  if (!currentPassword) {
+  if (!currentPassword.trim()) {
     errors.current_password = "Kata sandi lama wajib diisi.";
   }
   if (!newPassword || !isValidPasswordPolicy(newPassword)) {
     errors.new_password =
       "Kata sandi baru minimal 8 karakter dan wajib mengandung huruf serta angka.";
   }
-  if (newPassword !== newPasswordConfirmation) {
+  if (!newPasswordConfirmation) {
+    errors.new_password_confirmation =
+      "Konfirmasi kata sandi baru wajib diisi.";
+  } else if (newPassword !== newPasswordConfirmation) {
     errors.new_password_confirmation =
       "Konfirmasi kata sandi baru tidak cocok.";
   }

@@ -35,6 +35,26 @@ export function errorHandler(
     return;
   }
 
+  if (typeof err === "object" && err !== null) {
+    const requestError = err as { type?: unknown };
+    if (requestError.type === "entity.parse.failed") {
+      res.status(400).json({
+        success: false,
+        message: "Format JSON pada permintaan tidak valid.",
+        code: "INVALID_JSON",
+      });
+      return;
+    }
+    if (requestError.type === "entity.too.large") {
+      res.status(413).json({
+        success: false,
+        message: "Ukuran data permintaan melebihi batas.",
+        code: "PAYLOAD_TOO_LARGE",
+      });
+      return;
+    }
+  }
+
   console.error("[Unhandled Error]:", err);
   res.status(500).json({
     success: false,

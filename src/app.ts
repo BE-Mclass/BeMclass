@@ -1,6 +1,7 @@
 import cors from "cors";
 import express from "express";
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware";
+import announcementRouter from "./routes/announcement.routes";
 import authRouter from "./routes/auth.routes";
 import rosterRouter from "./routes/roster.routes";
 
@@ -20,6 +21,7 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api/roster", rosterRouter);
+app.use("/api/announcements", announcementRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

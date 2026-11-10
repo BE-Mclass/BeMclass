@@ -33,7 +33,7 @@ export async function handleWebLogin(
     const result = await loginWeb({
       email,
       password,
-      rememberMe: Boolean(remember_me ?? rememberMe),
+      rememberMe: remember_me ?? rememberMe,
       userAgent: req.headers["user-agent"],
       ipAddress: getClientIp(req),
     });
@@ -62,7 +62,7 @@ export async function handleMobileLogin(
     const loginIdentifier = identifier ?? email ?? nisn ?? "";
 
     const result = await loginMobile({
-      identifier: String(loginIdentifier),
+      identifier: loginIdentifier,
       password,
       userAgent: req.headers["user-agent"],
       ipAddress: getClientIp(req),

@@ -5,13 +5,94 @@ import { AppError } from "../utils/errors";
 const NISN_REGEX = /^\d{10}$/;
 
 export interface CreateRosterInput {
-  nisn: string;
-  fullName: string;
-  classId?: number | null;
-  attendanceNumber?: number | null;
-  parentPhone?: string | null;
-  whatsappNumber?: string | null;
-  address?: string | null;
+  nisn?: unknown;
+  fullName?: unknown;
+  classId?: unknown;
+  attendanceNumber?: unknown;
+  parentPhone?: unknown;
+  whatsappNumber?: unknown;
+  address?: unknown;
+}
+
+function addValidationError(
+  errors: Record<string, string>,
+  field: string,
+  message: string
+): void {
+  errors[field] = message;
+}
+
+function parseOptionalInteger(
+  value: unknown,
+  field: string,
+  errors: Record<string, string>,
+  minimum: number,
+  maximum: number
+): number | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (
+    value === null ||
+    (typeof value === "string" && value.trim() === "")
+  ) {
+    return null;
+  }
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^\d+$/.test(value.trim())
+        ? Number(value)
+        : Number.NaN;
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed < minimum ||
+    parsed > maximum
+  ) {
+    addValidationError(errors, field, "Nilai harus berupa bilangan bulat yang valid.");
+    return undefined;
+  }
+  return parsed;
+}
+
+function parseOptionalText(
+  value: unknown,
+  field: string,
+  errors: Record<string, string>,
+  maximumLength: number
+): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null || value === "") {
+    return null;
+  }
+  if (typeof value !== "string") {
+    addValidationError(errors, field, "Nilai harus berupa teks.");
+    return undefined;
+  }
+  const text = value.trim();
+  if (text.length > maximumLength) {
+    addValidationError(errors, field, `Maksimal ${maximumLength} karakter.`);
+    return undefined;
+  }
+  return text || null;
+}
+
+async function validateClassId(classId: number | null): Promise<void> {
+  if (classId === null) {
+    return;
+  }
+  const [rows] = await database.execute<RowDataPacket[]>(
+    `SELECT id FROM classes WHERE id = ? LIMIT 1`,
+    [classId]
+  );
+  if (rows.length === 0) {
+    throw new AppError("Kelas tidak ditemukan.", 422, {
+      code: "CLASS_NOT_FOUND",
+      errors: { class_id: "Pilih kelas yang terdaftar." },
+    });
+  }
 }
 
 export async function listStudentRoster(filters?: {
@@ -50,16 +131,45 @@ export async function listStudentRoster(filters?: {
 }
 
 export async function createStudentRoster(input: CreateRosterInput) {
-  const nisn = (input.nisn ?? "").trim();
-  const fullName = (input.fullName ?? "").trim();
-
   const errors: Record<string, string> = {};
-  if (!nisn || !NISN_REGEX.test(nisn)) {
+  const nisn = typeof input.nisn === "string" ? input.nisn.trim() : "";
+  const fullName = typeof input.fullName === "string" ? input.fullName.trim() : "";
+  if (!NISN_REGEX.test(nisn)) {
     errors.nisn = "NISN wajib berupa 10 digit angka.";
   }
   if (!fullName) {
     errors.full_name = "Nama lengkap siswa wajib diisi.";
+  } else if (fullName.length > 150) {
+    errors.full_name = "Nama lengkap maksimal 150 karakter.";
   }
+
+  const classId = parseOptionalInteger(
+    input.classId,
+    "class_id",
+    errors,
+    1,
+    Number.MAX_SAFE_INTEGER
+  );
+  const attendanceNumber = parseOptionalInteger(
+    input.attendanceNumber,
+    "attendance_number",
+    errors,
+    0,
+    65535
+  );
+  const parentPhone = parseOptionalText(
+    input.parentPhone,
+    "parent_phone",
+    errors,
+    30
+  );
+  const whatsappNumber = parseOptionalText(
+    input.whatsappNumber,
+    "whatsapp_number",
+    errors,
+    30
+  );
+  const address = parseOptionalText(input.address, "address", errors, 65535);
 
   if (Object.keys(errors).length > 0) {
     throw new AppError("Validasi data roster gagal.", 400, {
@@ -67,6 +177,8 @@ export async function createStudentRoster(input: CreateRosterInput) {
       errors,
     });
   }
+
+  await validateClassId(classId ?? null);
 
   const [existing] = await database.execute<RowDataPacket[]>(
     `SELECT id FROM student_roster WHERE nisn = ? LIMIT 1`,
@@ -86,11 +198,11 @@ export async function createStudentRoster(input: CreateRosterInput) {
     [
       nisn,
       fullName,
-      input.classId ?? null,
-      input.attendanceNumber ?? null,
-      input.parentPhone ?? null,
-      input.whatsappNumber ?? null,
-      input.address ?? null,
+      classId ?? null,
+      attendanceNumber ?? null,
+      parentPhone ?? null,
+      whatsappNumber ?? null,
+      address ?? null,
     ]
   );
 
@@ -103,8 +215,21 @@ export async function createStudentRoster(input: CreateRosterInput) {
 
 export async function updateStudentRoster(
   id: number,
-  input: Partial<CreateRosterInput> & { isActive?: boolean }
+  input: Partial<CreateRosterInput> & { isActive?: unknown }
 ) {
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw new AppError("ID roster siswa tidak valid.", 400, {
+      code: "INVALID_ID",
+      errors: { id: "ID harus berupa bilangan bulat positif." },
+    });
+  }
+  if (!Object.values(input).some((value) => value !== undefined)) {
+    throw new AppError("Tidak ada perubahan data roster yang dikirim.", 400, {
+      code: "VALIDATION_ERROR",
+      errors: { _form: "Isi minimal satu data yang akan diperbarui." },
+    });
+  }
+
   const [existingRows] = await database.execute<RowDataPacket[]>(
     `SELECT * FROM student_roster WHERE id = ? LIMIT 1`,
     [id]
@@ -114,14 +239,70 @@ export async function updateStudentRoster(
   }
   const current = existingRows[0];
 
-  const nisn = input.nisn !== undefined ? input.nisn.trim() : current.nisn;
-  const fullName =
-    input.fullName !== undefined ? input.fullName.trim() : current.full_name;
-
+  const errors: Record<string, string> = {};
+  const nisn = input.nisn !== undefined
+    ? typeof input.nisn === "string"
+      ? input.nisn.trim()
+      : ""
+    : current.nisn;
+  const fullName = input.fullName !== undefined
+    ? typeof input.fullName === "string"
+      ? input.fullName.trim()
+      : ""
+    : current.full_name;
   if (!NISN_REGEX.test(nisn)) {
-    throw new AppError("NISN wajib berupa 10 digit angka.", 400, {
-      errors: { nisn: "NISN wajib berupa 10 digit angka." },
+    errors.nisn = "NISN wajib berupa 10 digit angka.";
+  }
+  if (!fullName) {
+    errors.full_name = "Nama lengkap siswa wajib diisi.";
+  } else if (fullName.length > 150) {
+    errors.full_name = "Nama lengkap maksimal 150 karakter.";
+  }
+
+  const classId = parseOptionalInteger(
+    input.classId,
+    "class_id",
+    errors,
+    1,
+    Number.MAX_SAFE_INTEGER
+  );
+  const attendanceNumber = parseOptionalInteger(
+    input.attendanceNumber,
+    "attendance_number",
+    errors,
+    0,
+    65535
+  );
+  const parentPhone = parseOptionalText(
+    input.parentPhone,
+    "parent_phone",
+    errors,
+    30
+  );
+  const whatsappNumber = parseOptionalText(
+    input.whatsappNumber,
+    "whatsapp_number",
+    errors,
+    30
+  );
+  const address = parseOptionalText(input.address, "address", errors, 65535);
+  if (
+    input.isActive !== undefined &&
+    typeof input.isActive !== "boolean" &&
+    input.isActive !== 0 &&
+    input.isActive !== 1
+  ) {
+    errors.is_active = "Status aktif harus berupa boolean.";
+  }
+  if (Object.keys(errors).length > 0) {
+    throw new AppError("Validasi data roster gagal.", 400, {
+      code: "VALIDATION_ERROR",
+      errors,
     });
+  }
+
+  if (classId !== undefined) {
+    await validateClassId(classId);
   }
 
   if (nisn !== current.nisn) {
@@ -148,17 +329,17 @@ export async function updateStudentRoster(
     [
       nisn,
       fullName,
-      input.classId !== undefined ? input.classId : current.class_id,
-      input.attendanceNumber !== undefined
-        ? input.attendanceNumber
+      classId !== undefined ? classId : current.class_id,
+      attendanceNumber !== undefined
+        ? attendanceNumber
         : current.attendance_number,
-      input.parentPhone !== undefined ? input.parentPhone : current.parent_phone,
-      input.whatsappNumber !== undefined
-        ? input.whatsappNumber
+      parentPhone !== undefined ? parentPhone : current.parent_phone,
+      whatsappNumber !== undefined
+        ? whatsappNumber
         : current.whatsapp_number,
-      input.address !== undefined ? input.address : current.address,
+      address !== undefined ? address : current.address,
       input.isActive !== undefined
-        ? input.isActive
+        ? Boolean(input.isActive)
           ? 1
           : 0
         : current.is_active,
@@ -174,6 +355,12 @@ export async function updateStudentRoster(
 }
 
 export async function deleteStudentRoster(id: number): Promise<void> {
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw new AppError("ID roster siswa tidak valid.", 400, {
+      code: "INVALID_ID",
+      errors: { id: "ID harus berupa bilangan bulat positif." },
+    });
+  }
   const [existingRows] = await database.execute<RowDataPacket[]>(
     `SELECT id, user_id FROM student_roster WHERE id = ? LIMIT 1`,
     [id]
