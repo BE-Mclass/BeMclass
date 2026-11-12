@@ -30,6 +30,9 @@ export function errorHandler(
     if (err.errors) {
       responseBody.errors = err.errors;
     }
+    if (err.details) {
+      responseBody.details = err.details;
+    }
 
     res.status(err.statusCode).json(responseBody);
     return;

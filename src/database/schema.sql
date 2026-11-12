@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS users (
   name VARCHAR(150) NOT NULL,
   email VARCHAR(191) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL COMMENT 'Argon2id hash',
+  google_id VARCHAR(191) NULL UNIQUE COMMENT 'Google OIDC subject identifier (for mobile student OAuth)',
+  oauth_provider ENUM('local', 'google') NOT NULL DEFAULT 'local',
   role ENUM('admin', 'guru', 'siswa') NOT NULL,
   is_active TINYINT(1) NOT NULL DEFAULT 1,
   photo_url VARCHAR(255) NULL,

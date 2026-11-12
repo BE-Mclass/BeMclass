@@ -30,6 +30,20 @@ async function runMigrations(): Promise<void> {
 
     console.log("Running database schema migrations...");
     await connection.query(schemaSql);
+
+    // Ensure OAuth columns exist on existing users table (backward-compatible migration)
+    const [googleIdCol] = await connection.query<any[]>(
+      `SHOW COLUMNS FROM \`users\` LIKE 'google_id';`
+    );
+    if (Array.isArray(googleIdCol) && googleIdCol.length === 0) {
+      await connection.query(
+        `ALTER TABLE \`users\`
+         ADD COLUMN \`google_id\` VARCHAR(191) NULL UNIQUE COMMENT 'Google OIDC subject identifier (for mobile student OAuth)' AFTER \`password_hash\`,
+         ADD COLUMN \`oauth_provider\` ENUM('local', 'google') NOT NULL DEFAULT 'local' AFTER \`google_id\`;`
+      );
+      console.log("Added google_id and oauth_provider columns to users table.");
+    }
+
     console.log("Database migration completed successfully.");
   } finally {
     await connection.end();

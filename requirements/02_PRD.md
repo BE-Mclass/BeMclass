@@ -1,6 +1,6 @@
 # 02 — Product Requirements Document (PRD)
 
-> **Produk:** M-Class · **Versi:** 1.1 · **Tanggal:** 4 November 2026
+> **Produk:** M-Class · **Versi:** 1.2 · **Tanggal:** 11 November 2026
 > **Cakupan dokumen:** *Apa* yang dibangun dan *kriteria penerimaannya*. Detail aturan & API ada di `03_FSD.md`.
 > **Prioritas:** `P0` wajib v1 · `P1` v1 jika waktu cukup / rilis berikutnya · `P2` backlog.
 
@@ -9,6 +9,9 @@
 > 2. **Presensi wajah sepenuhnya otomatis.** Siswa langsung tercatat hadir bila wajah cocok dengan data referensi — **tanpa menunggu validasi guru**. Halaman "validasi" di web menjadi **lihat hasil scan saja** (read-only).
 > 3. **Role `admin` ditambahkan** dengan akses penuh. Role sekarang: `admin`, `guru`, `siswa`.
 > 4. **Presensi pulang dihapus** dari cakupan (tidak ada fitur, endpoint, maupun kolom check-out); hanya ada presensi masuk.
+>
+> **Revisi v1.2 (11 Nov 2026):**
+> 5. **Login Google OAuth ditambahkan untuk Siswa di aplikasi Mobile (Flutter).** Siswa dapat masuk menggunakan akun Google; jika akun Google/email belum terhubung ke data siswa, siswa wajib memasukkan 10 digit NISN untuk menautkan akun ke roster sekolah.
 
 ---
 
@@ -83,7 +86,7 @@ Tujuan bisnis & metrik: lihat `01_MRD.md` §3.
 
 | Kode | Fitur | Prioritas |
 |------|-------|-----------|
-| M-AUTH | Register (nama, NISN, email, sandi), login (email/NISN), lupa sandi (OTP), keluar | P0 |
+| M-AUTH | Register (nama, NISN, email, sandi), login (email/NISN), **login Google OAuth (ID Token + tautan NISN)**, lupa sandi (OTP), keluar | P0 |
 | M-FACE | Enrollment wajah + persetujuan biometrik | P0 *(layar baru — FC-08)* |
 | M-ATT | Presensi GPS + foto + verifikasi wajah **otomatis** (cocok → langsung tercatat) | P0 |
 | M-STAT | Status harian (hadir/terlambat/izin/sakit/alpa), popup terlambat | P0 |
@@ -116,6 +119,15 @@ Sebagai admin atau guru, saya ingin masuk dengan email dan kata sandi agar dapat
 **US-02 — Siswa login (Mobile)** · P0
 - **AC1** Identitas dapat berupa **email atau NISN 10 digit** + sandi.
 - **AC2** Salah kredensial → 401 pesan generik. Akun admin/guru → 403.
+
+**US-02B — Siswa login dengan Google OAuth (Mobile)** · P0
+Sebagai siswa di aplikasi mobile, saya ingin masuk menggunakan akun Google saya agar tidak perlu mengetik email dan kata sandi setiap kali masuk.
+- **AC1** Given siswa memilih "Masuk dengan Google" di mobile dan mengirim `id_token` Google yang valid, When `google_id` atau `email` sudah terhubung ke akun `siswa` aktif di database, Then server memverifikasi token, menautkan `google_id` (jika belum tertaut), membuat sesi mobile baru, dan mengembalikan JWT beserta profil siswa.
+- **AC2** Given `google_id` dan `email` Google belum terdaftar tetapi request menyertakan `nisn` (10 digit), When `nisn` ditemukan di roster aktif dan belum diklaim akun lain, Then server otomatis membuat akun `users` (`role=siswa`), menautkannya ke `students`/`student_roster`, dan langsung mengembalikan sesi login (HTTP 200).
+- **AC3** Given `google_id` dan `email` Google belum terdaftar dan `nisn` belum disertakan, Then server mengembalikan **422 `OAUTH_NISN_REQUIRED`** agar aplikasi mobile menampilkan form input NISN untuk menautkan akun Google ke data roster siswa.
+- **AC4** Given `nisn` yang dikirim tidak ada di roster atau sudah diklaim akun lain, Then server menolak dengan 422 `NISN_NOT_IN_ROSTER` atau 409 `NISN_ALREADY_REGISTERED`.
+- **AC5** Given email Google tersebut milik akun `admin` atau `guru`, Then server menolak dengan 403 `ROLE_NOT_ALLOWED` (OAuth khusus untuk murid di mobile).
+- **AC6** Given `id_token` Google tidak valid, kedaluwarsa, atau `email_verified != true`, Then server menolak dengan 401 `INVALID_OAUTH_TOKEN`.
 
 **US-03 — Register siswa (Mobile)** · P0
 - **AC1** Input: nama, NISN (10 digit angka), email, sandi (≥ 8, huruf & angka), konfirmasi sandi (validasi di klien).
@@ -291,7 +303,7 @@ Detail teknis & pengukuran: `04_TRD.md`.
 
 ## 7. Di Luar Cakupan (Eksplisit)
 
-Role orang tua/wali · registrasi & UI manajemen akun admin/guru (dikelola di database) · WhatsApp/SMS · UI manajemen siswa · mode offline · presensi per mapel · login Google · multi-sekolah · analitik lanjutan · liveness detection (P2) · SSE/WebSocket (P2).
+Role orang tua/wali · registrasi & UI manajemen akun admin/guru (dikelola di database) · OAuth untuk web admin/guru · WhatsApp/SMS · UI manajemen siswa · mode offline · presensi per mapel · multi-sekolah · analitik lanjutan · liveness detection (P2) · SSE/WebSocket (P2).
 
 ---
 

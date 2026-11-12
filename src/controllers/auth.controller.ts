@@ -3,6 +3,7 @@ import {
   changePassword,
   listUserSessions,
   loginMobile,
+  loginStudentGoogleOAuth,
   loginWeb,
   logoutSession,
   registerStudent,
@@ -71,6 +72,37 @@ export async function handleMobileLogin(
     res.status(200).json({
       success: true,
       message: "Login berhasil.",
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/auth/oauth/google & POST /api/auth/mobile/oauth/google
+ * US-02B & BR-09B — Siswa login menggunakan Google OAuth di tampilan Mobile
+ */
+export async function handleMobileGoogleOAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { id_token, idToken, credential, nisn } = req.body ?? {};
+
+    const result = await loginStudentGoogleOAuth({
+      idToken: id_token ?? idToken ?? credential ?? "",
+      nisn,
+      userAgent: req.headers["user-agent"],
+      ipAddress: getClientIp(req),
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Login Google berhasil.",
+      token: result.token,
+      user: result.user,
       data: result,
     });
   } catch (error) {

@@ -8,6 +8,7 @@ import {
   UserRole,
 } from "../types/auth.types";
 import { AppError } from "../utils/errors";
+import { verifyGoogleIdToken } from "../utils/google-oauth";
 import { signAccessToken } from "../utils/jwt";
 import {
   hashPassword,
@@ -27,6 +28,8 @@ interface DbUserWithStudentRow extends RowDataPacket {
   name: string;
   email: string;
   password_hash: string;
+  google_id?: string | null;
+  oauth_provider?: "local" | "google";
   role: UserRole;
   is_active: number;
   photo_url: string | null;
@@ -37,10 +40,17 @@ interface DbUserWithStudentRow extends RowDataPacket {
   class_name: string | null;
   grade_level: number | null;
   attendance_number: number | null;
-  parent_phone: string | null;
+  parent_phone: number | string | null;
   whatsapp_number: string | null;
   address: string | null;
   roster_is_active: number | null;
+}
+
+export interface MobileGoogleOAuthInput {
+  idToken: unknown;
+  nisn?: unknown;
+  userAgent?: string;
+  ipAddress?: string;
 }
 
 export interface WebLoginInput {
@@ -105,7 +115,10 @@ function mapUserResponse(row: DbUserWithStudentRow): AuthenticatedUser {
       class_name: row.class_name,
       grade_level: row.grade_level,
       attendance_number: row.attendance_number,
-      parent_phone: row.parent_phone,
+      parent_phone:
+        row.parent_phone !== null && row.parent_phone !== undefined
+          ? String(row.parent_phone)
+          : null,
       whatsapp_number: row.whatsapp_number,
       address: row.address,
     };
@@ -311,6 +324,211 @@ export async function loginMobile(input: MobileLoginInput) {
       403,
       { code: "ACCOUNT_INACTIVE" }
     );
+  }
+
+  const session = await createSessionAndToken({
+    userId: userRow.id,
+    role: userRow.role,
+    clientType: "mobile",
+    rememberMe: true,
+    userAgent: input.userAgent,
+    ipAddress: input.ipAddress,
+  });
+
+  return {
+    token: session.token,
+    token_type: "Bearer",
+    expires_at: session.expiresAt,
+    user: mapUserResponse(userRow),
+  };
+}
+
+/**
+ * US-02B & BR-09B — Siswa login dengan Google OAuth di tampilan Mobile
+ * - Hanya untuk role 'siswa' di mobile (admin/guru ditolak 403 ROLE_NOT_ALLOWED)
+ * - Jika email/google_id sudah terhubung ke siswa, langsung login
+ * - Jika belum terdaftar di users, wajib menyertakan 10 digit NISN yang terdaftar di roster
+ */
+export async function loginStudentGoogleOAuth(input: MobileGoogleOAuthInput) {
+  const idToken =
+    typeof input.idToken === "string" ? input.idToken.trim() : "";
+  const rawNisn =
+    typeof input.nisn === "string" ? input.nisn.trim() : undefined;
+
+  const errors: Record<string, string> = {};
+  if (!idToken) {
+    errors.id_token = "Token Google (id_token) wajib disertakan.";
+  }
+  if (rawNisn !== undefined && rawNisn !== "" && !NISN_REGEX.test(rawNisn)) {
+    errors.nisn = "NISN harus terdiri dari 10 digit angka.";
+  }
+  if (Object.keys(errors).length > 0) {
+    throw new AppError("Validasi login Google OAuth gagal.", 400, {
+      code: "VALIDATION_ERROR",
+      errors,
+    });
+  }
+
+  // 1. Verifikasi id_token ke Google (signature, exp, aud, email_verified)
+  const googleProfile = await verifyGoogleIdToken(idToken);
+
+  // 2. Cari apakah google_id atau email sudah terdaftar di tabel users
+  const [existingRows] = await database.execute<DbUserWithStudentRow[]>(
+    `SELECT
+       u.id, u.name, u.email, u.password_hash, u.google_id, u.oauth_provider,
+       u.role, u.is_active, u.photo_url,
+       sr.id AS roster_id, sr.nisn, sr.full_name, sr.class_id,
+       c.name AS class_name, c.grade_level,
+       sr.attendance_number, sr.parent_phone, sr.whatsapp_number, sr.address,
+       sr.is_active AS roster_is_active
+     FROM users u
+     LEFT JOIN student_roster sr ON sr.user_id = u.id
+     LEFT JOIN classes c ON c.id = sr.class_id
+     WHERE u.google_id = ? OR LOWER(u.email) = ?
+     ORDER BY CASE WHEN u.google_id = ? THEN 0 ELSE 1 END
+     LIMIT 1`,
+    [googleProfile.sub, googleProfile.email, googleProfile.sub]
+  );
+
+  let userRow = existingRows[0];
+
+  if (userRow) {
+    // Pastikan bukan akun admin/guru (BR-09B: OAuth hanya untuk murid di mobile)
+    if (userRow.role !== "siswa") {
+      throw new AppError(
+        "Login Google OAuth hanya diperuntukkan bagi akun siswa di aplikasi mobile.",
+        403,
+        { code: "ROLE_NOT_ALLOWED" }
+      );
+    }
+
+    // Cek konflik jika email sama tetapi sudah terhubung ke google_id lain
+    if (userRow.google_id && userRow.google_id !== googleProfile.sub) {
+      throw new AppError(
+        "Email siswa ini sudah terhubung dengan akun Google lain.",
+        409,
+        { code: "OAUTH_ACCOUNT_CONFLICT" }
+      );
+    }
+
+    if (!userRow.is_active || userRow.roster_is_active === 0) {
+      throw new AppError(
+        "Akun siswa tidak aktif. Silakan hubungi pihak sekolah.",
+        403,
+        { code: "ACCOUNT_NOT_ACTIVE" }
+      );
+    }
+
+    // Jika akun siswa sebelumnya daftar manual (google_id masih kosong), tautkan google_id
+    if (!userRow.google_id) {
+      await database.execute(
+        `UPDATE users
+         SET google_id = ?,
+             photo_url = COALESCE(photo_url, ?)
+         WHERE id = ?`,
+        [googleProfile.sub, googleProfile.picture, userRow.id]
+      );
+      userRow.google_id = googleProfile.sub;
+      if (!userRow.photo_url && googleProfile.picture) {
+        userRow.photo_url = googleProfile.picture;
+      }
+    }
+  } else {
+    // 3. Akun belum terdaftar di users -> butuh NISN untuk menautkan ke student_roster
+    if (!rawNisn) {
+      throw new AppError(
+        "Akun Google belum terhubung ke data siswa. Silakan masukkan 10 digit NISN Anda.",
+        422,
+        {
+          code: "OAUTH_NISN_REQUIRED",
+          details: {
+            requires_nisn: true,
+            email: googleProfile.email,
+            name: googleProfile.name,
+            picture: googleProfile.picture,
+          },
+        }
+      );
+    }
+
+    const connection = await database.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [rosterRows] = await connection.execute<RowDataPacket[]>(
+        `SELECT sr.id, sr.nisn, sr.full_name, sr.class_id, sr.user_id, sr.is_active
+         FROM student_roster sr
+         WHERE sr.nisn = ?
+         FOR UPDATE`,
+        [rawNisn]
+      );
+
+      const roster = rosterRows[0];
+      if (!roster || !roster.is_active) {
+        throw new AppError("NISN tidak terdaftar di sekolah", 422, {
+          code: "NISN_NOT_IN_ROSTER",
+          errors: { nisn: "NISN tidak terdaftar di sekolah" },
+        });
+      }
+
+      if (roster.user_id !== null) {
+        throw new AppError("NISN sudah terdaftar", 409, {
+          code: "NISN_ALREADY_REGISTERED",
+          errors: { nisn: "NISN sudah terdaftar" },
+        });
+      }
+
+      // Buat random password hash yang aman karena kolom password_hash NOT NULL
+      const randomPasswordHash = await hashPassword(
+        `OAuth_${randomUUID()}_A1`
+      );
+      const displayName =
+        (roster.full_name as string | undefined)?.trim() || googleProfile.name;
+
+      const [insertResult] = await connection.execute<ResultSetHeader>(
+        `INSERT INTO users (name, email, password_hash, google_id, oauth_provider, role, is_active, photo_url)
+         VALUES (?, ?, ?, ?, 'google', 'siswa', 1, ?)`,
+        [
+          displayName,
+          googleProfile.email,
+          randomPasswordHash,
+          googleProfile.sub,
+          googleProfile.picture,
+        ]
+      );
+
+      const newUserId = insertResult.insertId;
+
+      await connection.execute(
+        `UPDATE student_roster SET user_id = ? WHERE id = ?`,
+        [newUserId, roster.id]
+      );
+
+      await connection.commit();
+
+      const [createdRows] = await database.execute<DbUserWithStudentRow[]>(
+        `SELECT
+           u.id, u.name, u.email, u.password_hash, u.google_id, u.oauth_provider,
+           u.role, u.is_active, u.photo_url,
+           sr.id AS roster_id, sr.nisn, sr.full_name, sr.class_id,
+           c.name AS class_name, c.grade_level,
+           sr.attendance_number, sr.parent_phone, sr.whatsapp_number, sr.address,
+           sr.is_active AS roster_is_active
+         FROM users u
+         LEFT JOIN student_roster sr ON sr.user_id = u.id
+         LEFT JOIN classes c ON c.id = sr.class_id
+         WHERE u.id = ?
+         LIMIT 1`,
+        [newUserId]
+      );
+
+      userRow = createdRows[0];
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
+    }
   }
 
   const session = await createSessionAndToken({

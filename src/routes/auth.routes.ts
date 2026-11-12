@@ -4,6 +4,7 @@ import {
   handleGetMe,
   handleListSessions,
   handleLogout,
+  handleMobileGoogleOAuth,
   handleMobileLogin,
   handleRevokeSession,
   handleStudentRegister,
@@ -17,9 +18,14 @@ const authRouter = Router();
 
 // US-01 — Admin/Guru login (Web)
 authRouter.post("/web/login", handleWebLogin);
+authRouter.post("/admin/login", handleWebLogin);
 
 // US-02 — Siswa login (Mobile: email atau NISN 10 digit)
 authRouter.post("/mobile/login", handleMobileLogin);
+
+// US-02B — Siswa login dengan Google OAuth (Mobile)
+authRouter.post("/oauth/google", handleMobileGoogleOAuth);
+authRouter.post("/mobile/oauth/google", handleMobileGoogleOAuth);
 
 // Alias umum POST /api/auth/login (otomatis mendeteksi web/mobile)
 authRouter.post("/login", handleUnifiedLogin);
