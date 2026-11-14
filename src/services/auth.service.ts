@@ -7,6 +7,10 @@ import {
   StudentProfile,
   UserRole,
 } from "../types/auth.types";
+import {
+  removeOldAvatarFileIfLocal,
+  saveAvatarFile,
+} from "../utils/avatar-upload";
 import { AppError } from "../utils/errors";
 import { verifyGoogleIdToken } from "../utils/google-oauth";
 import { signAccessToken } from "../utils/jwt";
@@ -78,6 +82,9 @@ export interface StudentRegisterInput {
 
 export interface SessionInfo {
   id: string;
+  device: string;
+  platform: string;
+  ip: string | null;
   client_type: ClientType;
   user_agent: string | null;
   ip_address: string | null;
@@ -86,6 +93,44 @@ export interface SessionInfo {
   created_at: Date;
   expires_at: Date;
   is_current: boolean;
+}
+
+function formatStaffCode(row: DbUserWithStudentRow): string | undefined {
+  if (row.role === "admin" || row.role === "guru") {
+    return `AGR-${String(row.id).padStart(3, "0")}`;
+  }
+  return undefined;
+}
+
+function parseDeviceLabel(
+  userAgent: string | null | undefined,
+  clientType: ClientType
+): { device: string; platform: string } {
+  const ua = (userAgent ?? "").toLowerCase();
+  if (clientType === "mobile" || ua.includes("dart") || ua.includes("flutter") || ua.includes("okhttp")) {
+    if (ua.includes("iphone") || ua.includes("ios")) {
+      return { device: "Aplikasi iOS", platform: "ios" };
+    }
+    return { device: "Aplikasi Android", platform: "android" };
+  }
+
+  let browser = "Browser Web";
+  if (ua.includes("edg/")) browser = "Edge";
+  else if (ua.includes("chrome/")) browser = "Chrome";
+  else if (ua.includes("firefox/")) browser = "Firefox";
+  else if (ua.includes("safari/")) browser = "Safari";
+  else if (ua.includes("postman")) browser = "Postman Runtime";
+
+  let os = "";
+  if (ua.includes("mac os") || ua.includes("macintosh")) os = " pada macOS";
+  else if (ua.includes("windows")) os = " pada Windows";
+  else if (ua.includes("android")) os = " pada Android";
+  else if (ua.includes("linux")) os = " pada Linux";
+
+  return {
+    device: `${browser}${os}`,
+    platform: "web",
+  };
 }
 
 function getSessionDurationSeconds(rememberMe: boolean): number {
@@ -98,12 +143,15 @@ function getSessionDurationSeconds(rememberMe: boolean): number {
 }
 
 function mapUserResponse(row: DbUserWithStudentRow): AuthenticatedUser {
+  const staffCode = formatStaffCode(row);
   const user: AuthenticatedUser = {
     id: row.id,
+    ...(staffCode ? { staff_code: staffCode } : {}),
     name: row.name,
     email: row.email,
     role: row.role,
     photo_url: row.photo_url,
+    avatar_url: row.photo_url,
   };
 
   if (row.role === "siswa" && row.roster_id && row.nisn) {
@@ -770,27 +818,38 @@ export async function listUserSessions(
     [userId]
   );
 
-  return rows.map((row) => ({
-    id: row.id as string,
-    client_type: row.client_type as ClientType,
-    user_agent: (row.user_agent as string | null) ?? null,
-    ip_address: (row.ip_address as string | null) ?? null,
-    remember_me: Boolean(row.remember_me),
-    last_active_at: new Date(row.last_active_at),
-    created_at: new Date(row.created_at),
-    expires_at: new Date(row.expires_at),
-    is_current: row.id === currentSessionId,
-  }));
+  return rows.map((row) => {
+    const clientType = row.client_type as ClientType;
+    const userAgent = (row.user_agent as string | null) ?? null;
+    const ipAddress = (row.ip_address as string | null) ?? null;
+    const parsed = parseDeviceLabel(userAgent, clientType);
+
+    return {
+      id: row.id as string,
+      device: parsed.device,
+      platform: parsed.platform,
+      ip: ipAddress,
+      client_type: clientType,
+      user_agent: userAgent,
+      ip_address: ipAddress,
+      remember_me: Boolean(row.remember_me),
+      last_active_at: new Date(row.last_active_at),
+      created_at: new Date(row.created_at),
+      expires_at: new Date(row.expires_at),
+      is_current: row.id === currentSessionId,
+    };
+  });
 }
 
 /**
  * US-61 & US-62 — Update profil pengguna
- * - Admin/Guru dapat mengubah nama & email (US-62 AC1)
+ * - Admin/Guru dapat mengubah nama & email (US-62 AC1), serta opsional mengganti kata sandi sekaligus dari halaman pengaturan profil
  * - Siswa hanya dapat mengubah whatsapp_number & address, tidak bisa mengubah data akademik (US-61 AC1 & AC2)
  */
 export async function updateProfile(
   user: AuthenticatedUser,
-  payload: unknown
+  payload: unknown,
+  currentSessionId?: string
 ): Promise<AuthenticatedUser> {
   if (
     payload === null ||
@@ -808,9 +867,10 @@ export async function updateProfile(
 
   if (user.role === "siswa") {
     const errors: Record<string, string> = {};
-    const hasWhatsappNumber = hasField("whatsapp_number");
+    const hasWhatsappNumber =
+      hasField("whatsapp_number") || hasField("phone");
     const hasAddress = hasField("address");
-    const whatsappNumber = body.whatsapp_number;
+    const whatsappNumber = body.whatsapp_number ?? body.phone;
     const address = body.address;
 
     if (!hasWhatsappNumber && !hasAddress) {
@@ -828,9 +888,9 @@ export async function updateProfile(
       ["whatsapp_number", whatsappNumber, 30],
       ["address", address, 16000],
     ] as const) {
-      if (!hasField(field)) {
-        continue;
-      }
+      if (field === "whatsapp_number" && !hasWhatsappNumber) continue;
+      if (field === "address" && !hasAddress) continue;
+
       if (value !== null && typeof value !== "string") {
         errors[field] = "Nilai harus berupa teks.";
       } else if (typeof value === "string" && value.trim().length > maxLength) {
@@ -862,10 +922,16 @@ export async function updateProfile(
     const errors: Record<string, string> = {};
     const hasName = hasField("name");
     const hasEmail = hasField("email");
-    if (!hasName && !hasEmail) {
+
+    const rawNewPassword =
+      body.new_password ?? body.newPassword ?? undefined;
+    const wantsPasswordChange =
+      typeof rawNewPassword === "string" && rawNewPassword.trim() !== "";
+
+    if (!hasName && !hasEmail && !wantsPasswordChange) {
       throw new AppError("Tidak ada perubahan profil yang dikirim.", 400, {
         code: "VALIDATION_ERROR",
-        errors: { _form: "Isi minimal nama atau email." },
+        errors: { _form: "Isi minimal nama, email, atau kata sandi baru." },
       });
     }
 
@@ -907,10 +973,27 @@ export async function updateProfile(
       );
       if (existing.length > 0) {
         throw new AppError("Email sudah digunakan oleh akun lain.", 409, {
-          code: "EMAIL_ALREADY_REGISTERED",
+          code: "EMAIL_TAKEN",
           errors: { email: "Email sudah digunakan oleh akun lain." },
         });
       }
+    }
+
+    if (wantsPasswordChange) {
+      const currentPassword =
+        body.current_password ?? body.currentPassword ?? "";
+      const newPasswordConfirmation =
+        body.new_password_confirmation ??
+        body.newPasswordConfirmation ??
+        rawNewPassword;
+
+      await changePassword({
+        userId: user.id,
+        currentSessionId: currentSessionId ?? "",
+        currentPassword,
+        newPassword: rawNewPassword,
+        newPasswordConfirmation,
+      });
     }
 
     await database.execute(`UPDATE users SET name = ?, email = ? WHERE id = ?`, [
@@ -936,6 +1019,72 @@ export async function updateProfile(
   );
 
   return mapUserResponse(updatedRows[0]);
+}
+
+/**
+ * US-62 AC2 — Ganti foto profil (JPG/PNG/WebP)
+ */
+export async function updateUserAvatar(
+  userId: number,
+  fileBuffer: Buffer,
+  ext: "jpg" | "png" | "webp"
+): Promise<{ photo_url: string; avatar_url: string }> {
+  const [rows] = await database.execute<RowDataPacket[]>(
+    `SELECT photo_url FROM users WHERE id = ? LIMIT 1`,
+    [userId]
+  );
+  if (rows.length === 0) {
+    throw new AppError("Pengguna tidak ditemukan.", 404);
+  }
+
+  const oldPhotoUrl = (rows[0].photo_url as string | null) ?? null;
+  const newPhotoUrl = saveAvatarFile(fileBuffer, ext);
+
+  await database.execute(`UPDATE users SET photo_url = ? WHERE id = ?`, [
+    newPhotoUrl,
+    userId,
+  ]);
+
+  removeOldAvatarFileIfLocal(oldPhotoUrl);
+
+  return {
+    photo_url: newPhotoUrl,
+    avatar_url: newPhotoUrl,
+  };
+}
+
+/**
+ * US-62 AC2 — Hapus foto profil
+ * Jika pengguna belum memiliki foto profil (photo_url kosong), kembalikan error 422 AVATAR_NOT_FOUND
+ */
+export async function deleteUserAvatar(userId: number): Promise<void> {
+  const [rows] = await database.execute<RowDataPacket[]>(
+    `SELECT photo_url FROM users WHERE id = ? LIMIT 1`,
+    [userId]
+  );
+  if (rows.length === 0) {
+    throw new AppError("Pengguna tidak ditemukan.", 404);
+  }
+
+  const oldPhotoUrl = (rows[0].photo_url as string | null) ?? null;
+  if (!oldPhotoUrl || oldPhotoUrl.trim() === "") {
+    throw new AppError(
+      "Gagal menghapus foto profil karena Anda belum memasang foto profil.",
+      422,
+      {
+        code: "AVATAR_NOT_FOUND",
+        errors: {
+          avatar: "Belum ada foto profil yang dapat dihapus.",
+        },
+      }
+    );
+  }
+
+  await database.execute(`UPDATE users SET photo_url = NULL WHERE id = ?`, [
+    userId,
+  ]);
+
+  removeOldAvatarFileIfLocal(oldPhotoUrl);
 }
 
 /**

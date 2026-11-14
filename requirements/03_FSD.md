@@ -1,31 +1,38 @@
 # 03 — Functional Specification Document (FSD)
 
-> **Produk:** M-Class Backend · **Versi:** 1.3 · **Tanggal:** 11 November 2026
-> **Fungsi dokumen:** Kontrak perilaku sistem — aturan bisnis (BR), state machine, dan **spesifikasi API**. FE dan BE mengimplementasikan dokumen ini sebagai acuan bersama.
-> Rujukan: PRD `US-xx` · Keputusan `D-xx` · Pertanyaan terbuka `OQ-xx` (lihat `00_README_HANDOFF.md`).
+> **Produk:** M-Class Backend · **Versi:** 1.4 · **Tanggal:** 12 November 2026
+> **Fungsi dokumen:** Kontrak perilaku sistem — aturan bisnis (BR), state machine, kontrak semantik UI ↔ API, dan **spesifikasi API**. FE dan BE mengimplementasikan dokumen ini sebagai acuan bersama.
+> Rujukan: PRD `US-xx` (`02_PRD.md`) · MRD (`01_MRD.md`) · TRD (`04_TRD.md`) · Design System (`05_DESIGN_SYSTEM.md`) · Keputusan `D-xx` & Pertanyaan terbuka `OQ-xx` (`00_README_HANDOFF.md`).
 > Label: `USULAN`/`TBD` = nilai konfigurasi yang belum final.
 > **Revisi v1.1:** (1) akun admin/guru **tanpa registrasi** (dikelola di database; web hanya login & logout); (2) presensi wajah **otomatis** tanpa validasi guru — halaman "validasi" menjadi **hasil scan (read-only)**; (3) **role `admin`** ditambahkan (akses penuh); (4) **presensi pulang dihapus** (hanya presensi masuk).
 > **Revisi v1.2 (koreksi stack):** (1) **Backend = Express + TypeScript + MySQL**, satu database; (2) **Flask tetap layanan AI internal** — tidak ada mesin wajah in-process di Node; (3) **Flutter tetap untuk mobile** — kontrak lewat **OpenAPI**, bukan paket TypeScript bersama; (4) **Web Vite/React dipertahankan**, migrasi ke TS opsional/bertahap memakai tipe dari paket kontrak `packages/contract`; (5) skema Prisma (15 tabel P0) = sumber kebenaran skema DB.
 > **Revisi v1.3 (OAuth Mobile Murid):** Penambahan fitur **Login Google OAuth khusus siswa (`siswa`) di aplikasi mobile (`POST /api/auth/oauth/google` / `POST /api/auth/mobile/oauth/google`)**, termasuk mekanisme penautan otomatis ke email siswa terdaftar atau klaim NISN baru dari roster (`BR-09B`).
+> **Revisi v1.4 (Penyelarasan Design System & MRD):** (1) Integrasi **Kontrak Semantik API ↔ UI** (`05_DESIGN_SYSTEM.md` §7), pedoman pesan error siap tampil Bahasa Indonesia (§8), format data tampilan vs API (§9), dan pola interaksi (§10); (2) penyelarasan BR-43 & spesifikasi pengumuman dengan dukungan `status` (`draft`|`published`) serta pemetaan alias bilingual (`type`/`category`, `audience`/`target_audience`, `event_date`/`publish_date`); (3) dokumentasi endpoint kalender presensi siswa (`GET /api/calendar/attendance`) dan manajemen roster (`GET/POST/PUT/DELETE /api/roster`).
 
 ---
 
 ## 1. Konvensi API
 
-### 1.1 Dasar
+### 1.1 Dasar & Format Data (`05_DESIGN_SYSTEM.md` §9)
 
-| Item | Ketentuan |
-|------|-----------|
-| Base path | `/api` (web dev proxy `/api` → `localhost:3000`) |
-| Format | JSON (`Content-Type: application/json`); upload file memakai `multipart/form-data` |
-| Autentikasi | Header `Authorization: Bearer <JWT>` kecuali endpoint publik |
-| Bahasa pesan | Bahasa Indonesia |
-| Penamaan field | `snake_case` (kecuali `{token, user}` kontrak auth yang sudah dipakai FE) |
-| Instant waktu | ISO-8601 **UTC** (`2026-11-02T00:12:34Z`) |
-| Tanggal | `YYYY-MM-DD` (kalender WIB) |
-| Jam harian | `HH:mm` (WIB) |
-| ID | Integer; siswa juga diidentifikasi publik oleh `nisn` |
-| Kontrak | **OpenAPI 3** yang di-generate dari skema Zod (`packages/contract`, TRD §1.2). Flutter memakai OpenAPI; web memakai tipe dari paket yang sama (bila TS). Flutter **tidak** memakai paket TypeScript |
+| Item | Format API | Format Tampilan UI (`05_DESIGN_SYSTEM.md` §9) |
+|------|------------|-----------------------------------------------|
+| Base path | `/api` (web dev proxy `/api` → `localhost:3000`) | — |
+| Format payload | JSON (`Content-Type: application/json`); upload memakai `multipart/form-data` | — |
+| Autentikasi | Header `Authorization: Bearer <JWT>` kecuali endpoint publik | — |
+| Bahasa pesan | Bahasa Indonesia (sopan, ringkas, menjelaskan apa yang terjadi & tindakan perbaikan) | Bahasa Indonesia |
+| Penamaan field | `snake_case` (kecuali `{token, user}` kontrak auth yang sudah dipakai FE) | — |
+| Instant waktu | ISO-8601 **UTC** (`2026-11-02T00:12:34Z`) | — |
+| Tanggal | `YYYY-MM-DD` (kalender WIB) | `Jumat, 14 Mar 2026` / `12 Mei 2013` (`id-ID`) |
+| Jam harian | `HH:mm` (WIB) | `07.15 WIB` (mobile) / `06:45 WIB` (web) |
+| Bulan | `YYYY-MM` | `Oktober 2026` |
+| Persentase | Integer `0–100` (tanpa desimal) | `90%` |
+| Jarak | Angka (meter) | `72 m` |
+| Kecocokan wajah | `similarity` desimal `0–1` | `Match 99.4%` (klien × 100, 1 desimal) |
+| NISN | String 10 digit angka | 10 digit tanpa spasi |
+| Kelas | `class.name` string siap tampil | `Kelas 7` |
+| Gender | `L` \| `P` | L / P |
+| Kontrak | **OpenAPI 3** yang di-generate dari skema Zod (`packages/contract`, TRD §1.2). Flutter memakai OpenAPI; web memakai tipe dari paket yang sama (bila TS). Flutter **tidak** memakai paket TypeScript | — |
 
 ### 1.2 Bentuk respons
 
@@ -51,8 +58,17 @@ Parameter paginasi: `page` (default 1), `limit` (default 20, maks 100).
   "errors": { "email": "Format email tidak valid" }
 }
 ```
-- `errors` (objek field→pesan) hanya ada pada HTTP 400 `VALIDATION_ERROR` (FE membacanya per-field).
+- `errors` (objek field→pesan) hanya ada pada HTTP 400 `VALIDATION_ERROR` (FE membacanya per-field dan menampilkannya di bawah input dengan border merah, `05_DESIGN_SYSTEM.md` §10).
 - Tubuh error bisa membawa `details` untuk kasus bisnis (mis. jarak & radius, atau info profil OAuth saat meminta NISN).
+- **Pedoman teks `message` (`05_DESIGN_SYSTEM.md` §8.2–8.3):**
+  - Login gagal (401): `"Login gagal! Email atau kata sandi salah."`
+  - Akses ditolak (403): `"Akses ditolak."` (atau penjelasan spesifik yang sopan)
+  - Sandi < 8: `"Kata sandi minimal 8 karakter."`
+  - OTP: `"Kode OTP harus 6 digit."`
+  - NISN: `"NISN harus 10 digit"`
+  - Konfirmasi sandi: `"Password tidak cocok"`
+  - Presensi berhasil: `"Absensi Masuk Berhasil!"`
+  - Penolakan presensi menyebut penyebab + tindakan perbaikan (contoh: `"Anda berada 72 m dari sekolah (batas 50 m). Mendekatlah ke area sekolah lalu coba lagi."`).
 
 ### 1.3 Status HTTP
 
@@ -72,15 +88,15 @@ Parameter paginasi: `page` (default 1), `limit` (default 20, maks 100).
 
 > **Penting:** Respons 401 pada endpoint login/OAuth **tidak** memicu redirect (FE memakai `auth:false`), tetapi 401 pada endpoint terautentikasi memicu logout. Karena itu **jangan** memakai 401 untuk kasus "tidak punya izin" (pakai 403).
 
-### 1.4 URL file
+### 1.4 URL file & Privasi Avatar (`05_DESIGN_SYSTEM.md` DS-07)
 
-Foto (presensi, referensi wajah, avatar) dan lampiran **tidak publik**. Respons menyertakan `*_url` bertanda tangan & berumur pendek (`FILE_URL_TTL`, `USULAN` 10 menit), sehingga bisa dipakai tag `<img src>` tanpa header Authorization. Detail: TRD §9.5.
+Foto (presensi, referensi wajah, avatar) dan lampiran **tidak publik**. Respons menyertakan `*_url` bertanda tangan & berumur pendek (`FILE_URL_TTL`, `USULAN` 10 menit), sehingga bisa dipakai tag `<img src>` tanpa header Authorization. Klien **tidak boleh** mengirim nama siswa ke layanan pihak ketiga seperti `ui-avatars.com` (DS-07); gunakan URL foto dari API atau inisial lokal. Detail: TRD §9.5.
 
 ---
 
 ## 2. Peran & Hak Akses
 
-Role: **`admin`**, **`guru`**, **`siswa`**. Istilah **staf** = `admin` atau `guru`.
+Role: **`admin`** (Label UI: **Admin**), **`guru`** (Label UI: **Guru**), **`siswa`** (Label UI: **Siswa**). Istilah **staf** = `admin` atau `guru`.
 
 | Kemampuan | `siswa` | `guru` | `admin` |
 |-----------|:------:|:------:|:------:|
@@ -93,14 +109,14 @@ Role: **`admin`**, **`guru`**, **`siswa`**. Istilah **staf** = `admin` atau `gur
 | Dashboard/rekap/lokasi semua kelas | ❌ | ✅ | ✅ |
 | Hasil scan wajah (**lihat saja**) | ❌ | ✅ | ✅ |
 | Proses surat izin (setujui/tolak) | ❌ | ✅ | ✅ |
-| Buat/ubah/hapus pengumuman | ❌ | ✅ | ✅ |
+| Buat/ubah/hapus pengumuman & kelola roster (`/api/roster`) | ❌ | ✅ | ✅ |
 | Lihat pengumuman/kalender (sesuai target) | ✅ | ✅ | ✅ |
 | Export Excel kelas | ❌ | ✅ | ✅ |
 | Notifikasi & profil/pengaturan akun sendiri | ✅ | ✅ | ✅ |
 | Atur geofence & jadwal presensi (P1) | ❌ | ❌ | ✅ |
 | Reset enrollment wajah siswa (P1) | ❌ | ❌ | ✅ |
 
-**Admin = akses penuh** (D-29): seluruh kemampuan `guru` ditambah kemampuan khusus admin. Fungsi personal siswa (presensi, surat izin sendiri, riwayat/PDF sendiri, serta login Google OAuth murid) terikat identitas siswa sehingga **tidak berlaku** bagi admin/guru. Implementasi: guard `requireRole('guru','admin')` untuk endpoint staf, `requireRole('admin')` untuk khusus admin, `requireRole('siswa')` untuk endpoint personal siswa.
+**Admin = akses penuh** (D-29): seluruh kemampuan `guru` ditambah kemampuan khusus admin. Fungsi personal siswa (presensi, surat izin sendiri, riwayat/PDF sendiri, serta login Google OAuth murid) terikat identitas siswa sehingga **tidak berlaku** bagi admin/guru. Implementasi: guard `requireRole('guru','admin')` / `authorizeRoles('admin','guru')` untuk endpoint staf, `authorizeRoles('admin')` untuk khusus admin, `authorizeRoles('siswa')` untuk endpoint personal siswa.
 
 Aturan umum: siswa **hanya** mengakses baris miliknya (`student_id` diambil dari token, tidak pernah dari body). Akses ke resource milik orang lain → **404** (bukan 403) agar tidak membocorkan keberadaan.
 
@@ -114,36 +130,36 @@ Aturan umum: siswa **hanya** mengakses baris miliknya (`student_id` diambil dari
 |----|--------|
 | BR-01 | **Kebijakan sandi:** ≥ 8 karakter, mengandung minimal 1 huruf dan 1 angka. Hash: argon2id. (Untuk akun siswa yang dibuat langsung via Google OAuth tanpa sandi awal, `password_hash` boleh `NULL` atau diisi hash acak yang tidak dapat ditebak hingga siswa mengatur sandi). |
 | BR-02 | **Resolusi `identity`:** jika cocok pola 10 digit angka → cari berdasarkan NISN siswa; jika mengandung `@` → cari berdasarkan email (case-insensitive, disimpan lowercase). |
-| BR-03 | `POST /auth/admin/login` hanya untuk `admin` dan `guru`; `POST /auth/login` hanya untuk `siswa` dan `admin` (admin boleh login di mobile dengan sandi; `guru` tetap tidak boleh). Role tidak sesuai → 403 `ROLE_NOT_ALLOWED`. Kredensial salah/akun tak ditemukan → 401 `INVALID_CREDENTIALS` (pesan sama untuk keduanya). Admin yang login di mobile tidak memperoleh fungsi personal siswa (presensi, enrollment, surat izin sendiri → 403 sesuai §2). |
+| BR-03 | `POST /auth/admin/login` (alias `/auth/web/login`) hanya untuk `admin` dan `guru`; `POST /auth/mobile/login` hanya untuk `siswa` (dan `POST /auth/login` mendukung login terpadu sesuai tipe klien). Role tidak sesuai → 403 `ROLE_NOT_ALLOWED` (`"Akses ditolak."`). Kredensial salah/akun tak ditemukan → 401 `INVALID_CREDENTIALS` (`"Login gagal! Email atau kata sandi salah."`, pesan sama untuk keduanya). Admin yang login di mobile tidak memperoleh fungsi personal siswa (presensi, enrollment, surat izin sendiri → 403 sesuai §2). |
 | BR-04 | Akun berstatus `inactive` → 403 `ACCOUNT_NOT_ACTIVE`. Status dicek **setelah** sandi/token OAuth benar (agar tidak membocorkan keberadaan akun). Akun yang **dihapus** dari database tidak ditemukan → 401 `INVALID_CREDENTIALS`. |
-| BR-05 | **Sesi:** setiap login (sandi maupun OAuth) membuat baris `auth_sessions` (jti). Token valid jika: tanda tangan benar, belum kedaluwarsa, sesi belum `revoked_at`. `logout` mencabut sesi saat ini. Ganti/reset sandi mencabut **sesi lain** (reset: semua). Masa berlaku: web default `SESSION_TTL_WEB` (`USULAN` 7 hari; `remember` opsional memperpanjang), mobile `SESSION_TTL_MOBILE` (`USULAN` 30 hari). |
+| BR-05 | **Sesi:** setiap login (sandi maupun OAuth) membuat baris `auth_sessions` / `user_sessions` (jti). Token valid jika: tanda tangan benar, belum kedaluwarsa, sesi belum `revoked_at`. `logout` mencabut sesi saat ini. Ganti/reset sandi mencabut **sesi lain** (reset: semua). Masa berlaku: web default `SESSION_TTL_WEB` (`USULAN` 7 hari; `remember` memperpanjang hingga 30 hari), mobile `SESSION_TTL_MOBILE` (`USULAN` 30 hari). |
 | BR-06 | **OTP:** 6 digit acak kriptografis; disimpan ter-hash; berlaku `OTP_TTL` (`USULAN` 10 mnt); maks `OTP_MAX_ATTEMPTS` (`USULAN` 5) salah → OTP dihanguskan; kirim ulang: cooldown `OTP_RESEND_COOLDOWN` (`USULAN` 60 dtk), maks `OTP_MAX_SENDS_PER_HOUR` (`USULAN` 5). **Hanya akun `siswa`:** email tak terdaftar, atau milik admin/guru, mengembalikan respons **identik** (200) tanpa mengirim OTP. |
 | BR-07 | Verifikasi OTP benar → dikeluarkan `reset_token` (acak, sekali pakai, `RESET_TOKEN_TTL` `USULAN` 15 mnt, disimpan ter-hash). |
-| BR-08 | **Register siswa:** NISN harus ada di `students` (roster) dan `user_id` kosong; email unik. Berhasil → buat `users(role=siswa,status=active)` dan tautkan ke baris `students`. |
-| BR-09 | **Akun admin/guru** dibuat, diubah, dan dihapus **langsung di database** (insert/update/delete); tidak ada endpoint registrasi, aktivasi, OAuth, maupun lupa sandi untuk role ini. Sandi tersimpan sebagai hash argon2id (helper CLI `hash-password`, TRD §12.4). `classes.homeroom_teacher_id` hanya boleh menunjuk akun `guru`. |
-| BR-09B | **Login Google OAuth Siswa (Mobile):** Khusus `role=siswa` di tampilan mobile. Klien Flutter mengirim `id_token` Google (dan `nisn` opsional 10 digit). Server memverifikasi `id_token` ke Google (signature, `exp`, `iss`, `aud` terhadap daftar `GOOGLE_CLIENT_IDS`, dan `email_verified=true`; gagal → 401 `INVALID_OAUTH_TOKEN`). Resolusi akun:<br>1. **Berdasarkan `google_id` (`sub`):** jika ditemukan di `users`, pastikan `role=siswa` (selain itu → 403 `ROLE_NOT_ALLOWED`) dan akun aktif (nonaktif → 403 `ACCOUNT_NOT_ACTIVE`), lalu buat sesi mobile.<br>2. **Berdasarkan `email` Google:** jika `google_id` belum ada tetapi `email` cocok dengan baris `users` yang sudah ada: jika `role != siswa` → 403 `ROLE_NOT_ALLOWED`; jika `users.google_id` sudah terisi `sub` berbeda → 409 `OAUTH_ACCOUNT_CONFLICT`; jika valid → tautkan `google_id = sub` ke akun `siswa` tersebut dan buat sesi mobile.<br>3. **Akun baru (belum ada di `users`):** wajib menyertakan `nisn` (10 digit). Jika `nisn` tidak dikirim → 422 `OAUTH_NISN_REQUIRED` (beserta `details: { email, name, picture }` dari token Google agar UI mobile dapat menampilkan form konfirmasi NISN). Jika `nisn` dikirim: cek di `students` (roster); jika tidak ada/nonaktif → 422 `NISN_NOT_IN_ROSTER`; jika `user_id` sudah terisi → 409 `NISN_ALREADY_REGISTERED`; jika valid → buat baris `users(role='siswa', status='active', google_id=sub, oauth_provider='google')`, tautkan ke `students.user_id`, dan langsung keluarkan sesi JWT mobile. |
+| BR-08 | **Register siswa:** NISN harus ada di `students`/`student_roster` dan `user_id` kosong; email unik. Berhasil → buat `users(role=siswa,status=active)` dan tautkan ke baris roster siswa. |
+| BR-09 | **Akun admin/guru** dibuat, diubah, dan dihapus **langsung di database** (insert/update/delete); tidak ada endpoint registrasi, aktivasi, OAuth, maupun lupa sandi untuk role ini. Sandi tersimpan sebagai hash argon2id (helper CLI `hash-password` / `cli-user`, TRD §12.4). `classes.homeroom_teacher_id` hanya boleh menunjuk akun `guru`. |
+| BR-09B | **Login Google OAuth Siswa (Mobile):** Khusus `role=siswa` di tampilan mobile. Klien Flutter mengirim `id_token` Google (dan `nisn` opsional 10 digit). Server memverifikasi `id_token` ke Google (signature, `exp`, `iss`, `aud` terhadap daftar `GOOGLE_CLIENT_ID`, dan `email_verified=true`; gagal → 401 `INVALID_OAUTH_TOKEN`). Resolusi akun:<br>1. **Berdasarkan `google_id` (`sub`):** jika ditemukan di `users`, pastikan `role=siswa` (selain itu → 403 `ROLE_NOT_ALLOWED`) dan akun aktif (nonaktif → 403 `ACCOUNT_NOT_ACTIVE`), lalu buat sesi mobile.<br>2. **Berdasarkan `email` Google:** jika `google_id` belum ada tetapi `email` cocok dengan baris `users` yang sudah ada: jika `role != siswa` → 403 `ROLE_NOT_ALLOWED`; jika `users.google_id` sudah terisi `sub` berbeda → 409 `OAUTH_ACCOUNT_CONFLICT`; jika valid → tautkan `google_id = sub` ke akun `siswa` tersebut dan buat sesi mobile.<br>3. **Akun baru (belum ada di `users`):** wajib menyertakan `nisn` (10 digit). Jika `nisn` tidak dikirim → 422 `OAUTH_NISN_REQUIRED` (beserta `details: { requires_nisn: true, email, name, picture }` dari token Google agar UI mobile dapat menampilkan form konfirmasi NISN). Jika `nisn` dikirim: cek di `students`/`student_roster`; jika tidak ada/nonaktif → 422 `NISN_NOT_IN_ROSTER`; jika `user_id` sudah terisi → 409 `NISN_ALREADY_REGISTERED`; jika valid → buat baris `users(role='siswa', status='active', google_id=sub, oauth_provider='google')`, tautkan ke `user_id` roster siswa, dan langsung keluarkan sesi JWT mobile. |
 
 ### 3.2 Presensi
 
 | ID | Aturan |
 |----|--------|
-| BR-10 | **Hari sekolah:** hari-dalam-minggu memiliki `is_school_day = true` pada `attendance_schedules` **dan** tidak ada pengumuman `type=libur` yang mencakup tanggal tersebut (`event_date..end_date`). |
+| BR-10 | **Hari sekolah:** hari-dalam-minggu memiliki `is_school_day = true` pada `attendance_schedules` **dan** tidak ada pengumuman `type=libur` (`category=holiday`, `status=published`) yang mencakup tanggal tersebut (`event_date..end_date`). |
 | BR-11 | **Jendela presensi (WIB):** diterima hanya jika `checkin_open ≤ jam sekarang ≤ checkin_close`. Di luar itu → 422 `OUTSIDE_TIME_WINDOW`. Nilai jam = `TBD` (OQ-04); contoh dari FE: batas terlambat `07:15`. |
-| BR-12 | **Geofence:** jarak Haversine antara (lat,lng) klien dan pusat sekolah. Sah jika `jarak ≤ radius_m` (default 50). Di luar → 422 `OUTSIDE_RADIUS`, attempt dicatat, **tidak** membuat record presensi. |
+| BR-12 | **Geofence:** jarak Haversine antara (lat,lng) klien dan pusat sekolah. Sah jika `jarak ≤ radius_m` (default 50). Di luar → 422 `OUTSIDE_RADIUS`, attempt dicatat, **tidak** membuat record presensi. Pesan error menyebutkan jarak aktual dan batas radius (`05_DESIGN_SYSTEM.md` §8.3). |
 | BR-13 | **Kualitas GPS:** jika `is_mocked = true` → 422 `MOCK_LOCATION`. Jika `accuracy_m > GPS_MAX_ACCURACY_M` (`TBD`, dev: 30) → 422 `GPS_ACCURACY_LOW` dengan panduan mengaktifkan GPS akurasi tinggi. |
-| BR-14 | **Keputusan wajah otomatis (satu ambang):** skor kemiripan `s` dari Flask dibandingkan dengan seluruh embedding referensi siswa → ambil skor tertinggi. `s ≥ FACE_MATCH_THRESHOLD` → **terverifikasi dan langsung dicatat**, tanpa menunggu admin/guru. `s < FACE_MATCH_THRESHOLD` → 422 `FACE_MISMATCH` (attempt dicatat, tanpa record; siswa boleh mengulang sesuai BR-17). Tidak ada wajah → `NO_FACE`; >1 wajah → `MULTIPLE_FACES`; kualitas rendah → `LOW_QUALITY`. Nilai ambang `TBD-kalibrasi` (OQ-05); karena tidak ada peninjauan manual, kalibrasi menentukan keseimbangan false-accept vs false-reject. |
-| BR-15 | **Status waktu:** `waktu_sekarang ≤ late_after` → `hadir`; selainnya → `terlambat` dengan `late_minutes = ceil((sekarang − late_after) / 1 menit)`. |
+| BR-14 | **Keputusan wajah otomatis (satu ambang):** skor kemiripan `s` dari Flask dibandingkan dengan seluruh embedding referensi siswa → ambil skor tertinggi. `s ≥ FACE_MATCH_THRESHOLD` → **terverifikasi (`match`) dan langsung dicatat**, tanpa menunggu admin/guru. `s < FACE_MATCH_THRESHOLD` → 422 `FACE_MISMATCH` (`no_match`, attempt dicatat, tanpa record; siswa boleh mengulang sesuai BR-17). Tidak ada wajah → `NO_FACE` (`no_face`); >1 wajah → `MULTIPLE_FACES` (`multiple_faces`); kualitas rendah → `LOW_QUALITY` (`low_quality`). Nilai ambang `TBD-kalibrasi` (OQ-05); karena tidak ada peninjauan manual, kalibrasi menentukan keseimbangan false-accept vs false-reject. |
+| BR-15 | **Status waktu:** `waktu_sekarang ≤ late_after` → `hadir` (ket. `"Tepat Waktu"`); selainnya → `terlambat` dengan `late_minutes = ceil((sekarang − late_after) / 1 menit)`. |
 | BR-16 | **Duplikat:** satu record per `(siswa, tanggal)` (unique key). Jika sudah ada record `hadir/terlambat` → 409 `ALREADY_CHECKED_IN`. Jika ada izin/sakit disetujui → 409 `HAS_APPROVED_LEAVE`. |
 | BR-17 | **Batas percobaan:** maks `ATTEMPT_MAX_PER_DAY` (`USULAN` 10) attempt/siswa/hari → 429 `TOO_MANY_ATTEMPTS`. |
-| BR-18 | **Alasan terlambat:** record `terlambat` menerima `late_reason` sekali (atau diperbarui hingga akhir hari). Pilihan baku: `macet`, `kendala_kendaraan`, `keperluan_keluarga`, `lainnya` (dengan `late_note` ≤ 120 karakter). Opsional (tidak memblokir). |
-| BR-19 | **Hasil scan wajah = lihat saja:** admin/guru dapat melihat daftar & detail scan (foto scan, foto referensi, skor, hasil, jarak, waktu). Tidak ada aksi setujui/tolak dan tidak ada perubahan status presensi dari fitur ini. Akses detail tercatat di audit log. |
+| BR-18 | **Alasan terlambat:** record `terlambat` menerima `late_reason` sekali (atau diperbarui hingga akhir hari). Pilihan baku (`05_DESIGN_SYSTEM.md` §7.5): `macet` ("Macet Lalu Lintas"), `kendala_kendaraan` ("Kendala Kendaraan"), `keperluan_keluarga` ("Keperluan Keluarga"), `lainnya` ("Lainnya", dengan `late_note` ≤ 120 karakter). Opsional (tidak memblokir). |
+| BR-19 | **Hasil scan wajah = lihat saja:** admin/guru dapat melihat daftar & detail scan (foto scan, foto referensi, skor, hasil, jarak, waktu). Tidak ada aksi setujui/tolak dan tidak ada perubahan status presensi dari fitur ini (D-28, DS-08). Akses detail tercatat di audit log. |
 | BR-20 | **Enrollment:** butuh `biometric_consent=true`; terima `ENROLL_MIN_SAMPLES`–`ENROLL_MAX_SAMPLES` foto (`USULAN` 3–5); tiap foto harus memuat tepat 1 wajah berkualitas memadai; sampel gagal dilaporkan beserta alasan; enrollment sah bila sampel diterima ≥ `ENROLL_MIN_SAMPLES`. Enrollment ulang menggantikan template lama. |
 
 ### 3.3 Surat Izin
 
 | ID | Aturan |
 |----|--------|
-| BR-21 | Kategori: `sakit`, `keperluan`, `dispensasi`. Lampiran **wajib** (PDF/JPG/PNG, ≤ 5 MB). `keterangan` wajib (≥ 5 karakter, ≤ 1000). |
+| BR-21 | Kategori (`05_DESIGN_SYSTEM.md` §7.3): `sakit` ("Sakit"), `keperluan` ("Keperluan"), `dispensasi` ("Dispensasi"). Lampiran **wajib** (PDF/JPG/PNG, ≤ 5 MB). `keterangan` wajib (≥ 5 karakter, ≤ 1000). |
 | BR-22 | Rentang `start_date ≤ end_date`; maks panjang `LEAVE_MAX_DAYS` (`USULAN` 14); tanggal mulai tidak lebih dari `LEAVE_MAX_BACKDATE_DAYS` (`USULAN` 3) hari ke belakang; tidak boleh tumpang tindih dengan izin berstatus `menunggu`/`disetujui` lain milik siswa yang sama (409 `LEAVE_OVERLAP`). |
 | BR-23 | Hari dalam rentang yang bukan hari sekolah diabaikan saat menerapkan izin. |
 | BR-24 | **Pemetaan status:** `sakit` → status presensi `sakit`; `keperluan` & `dispensasi` → `izin`. |
@@ -155,18 +171,18 @@ Aturan umum: siswa **hanya** mengakses baris miliknya (`student_id` diambil dari
 
 | ID | Aturan |
 |----|--------|
-| BR-28 | Job berjalan per hari sekolah, `ALPA_DELAY_MIN` (`USULAN` 5 menit) setelah `checkin_close`. Untuk setiap siswa **aktif** yang tidak punya record pada hari itu → buat record `alpa` (`source=auto_alpa`). |
+| BR-28 | Job berjalan per hari sekolah, `ALPA_DELAY_MIN` (`USULAN` 5 menit) setelah `checkin_close`. Untuk setiap siswa **aktif** yang tidak punya record pada hari itu → buat record `alpa` (`source=auto_alpa`, ket. `"Tanpa Keterangan"`, Label UI **"Alpa"** per DS-03). |
 | BR-29 | Job **idempoten** (unique `(student_id, date)`), melewati hari non-sekolah, dan menjalankan *catch-up* untuk hari yang terlewat bila server mati. Notifikasi `attendance_alpa` dikirim ke siswa terkait. |
 
-### 3.5 Agregasi & Definisi Metrik
+### 3.5 Agregasi & Definisi Metrik (`05_DESIGN_SYSTEM.md` §7.6)
 
 Untuk tanggal `D` dan himpunan siswa aktif `S` (tiap siswa tepat satu bucket):
 
 | ID | Definisi |
 |----|----------|
-| BR-30 | **Bucket dashboard:** `sudah_hadir` = status `hadir`; `terlambat_izin` = `terlambat + izin + sakit`; `belum_hadir_alpa` = `belum_hadir` (belum ada record sebelum job alpa) `+ alpa`. Jumlah ketiganya **selalu = total siswa aktif**. |
-| BR-31 | **Kehadiran** = `hadir + terlambat`. **Persentase hadir** = `(hadir + terlambat) ÷ total_siswa_aktif × 100`, dibulatkan 0 desimal. Untuk rentang tanggal: pembagi = jumlah (siswa aktif × hari sekolah dalam rentang). Hari non-sekolah dikecualikan. |
-| BR-32 | **Status kelas:** `Normal` bila % hadir ≥ `CLASS_ALERT_THRESHOLD` (`USULAN` 95); selainnya `Perlu Cek`. (FE: 100% = normal, 90%/80% = perlu cek.) |
+| BR-30 | **Bucket dashboard (`StatCard`):** `sudah_hadir` = status `hadir` (`variant="success"`); `terlambat_izin` = `terlambat + izin + sakit` (`variant="warning"`, subteks `"N Izin, N Telat"`); `belum_hadir_alpa` = `belum_hadir` (belum ada record sebelum job alpa) `+ alpa` (`variant="danger"`). Jumlah ketiganya **selalu = `total_students` (`variant="default"`)**. |
+| BR-31 | **Kehadiran** = `hadir + terlambat`. **Persentase hadir** = `(hadir + terlambat) ÷ total_siswa_aktif × 100`, dibulatkan 0 desimal (integer `0–100`). Untuk rentang tanggal: pembagi = jumlah (siswa aktif × hari sekolah dalam rentang). Hari non-sekolah dikecualikan. |
+| BR-32 | **Status kelas:** `Normal` (hijau) bila % hadir ≥ `CLASS_ALERT_THRESHOLD` (`USULAN` 95); selainnya `Perlu Cek` (amber). (FE: 100% = normal, 90%/80% = perlu cek.) |
 | BR-33 | **GPS:** *terpantau* = siswa distinct yang punya record presensi sah pada `D` (lokasi dalam radius). *Di luar radius* = siswa distinct yang punya attempt `rejected_outside_radius` pada `D`. Daftar di luar radius memuat attempt terbaru per siswa. |
 | BR-34 | **Total izin/sakit** = jumlah record `izin` + `sakit` pada rentang. **Alpa & pelanggaran** = jumlah `alpa` (v1: pelanggaran = alpa). |
 | BR-35 | Hanya data siswa dengan `is_active = true` yang dihitung. |
@@ -175,11 +191,11 @@ Untuk tanggal `D` dan himpunan siswa aktif `S` (tiap siswa tepat satu bucket):
 
 | ID | Aturan |
 |----|--------|
-| BR-40 | `audience`: `semua`, `siswa`, `guru`, `wali`. `wali` disimpan tetapi tidak menghasilkan notifikasi/penampilan (D-13). `class_id` opsional → hanya siswa kelas itu (pengumuman kelas). Siswa melihat: `semua`, `siswa`, dan (jika `class_id` terisi) kelasnya sendiri. Admin/guru melihat: `semua`, `guru`, `siswa` (semua kelas). Audiens `guru` mencakup **staf (guru dan admin)**. |
-| BR-41 | Pengumuman `type=libur` pada rentang `event_date..end_date` membuat hari tersebut non-sekolah (BR-10). Menerbitkan/menghapus libur yang sudah lewat tidak mengubah record lama. |
-| BR-42 | **Statistik kalender bulan M:** `total_agenda` = jumlah pengumuman dengan `event_date` (atau rentang) beririsan dengan M; `agenda_penting` = `priority ∈ {penting, urgent}` **atau** `type=penting`; `libur_nasional` = `type=libur`; `sedang_berlangsung` = event yang mencakup hari ini (WIB). Jumlah "dalam minggu ini" dikembalikan bersama `agenda_penting`. |
-| BR-43 | Pengumuman diterbitkan langsung (tanpa draft di v1). Guru dapat mengubah/hapus (soft delete) milik siapa pun; perubahan tercatat. |
-| BR-44 | Prioritas `urgent`/`penting` memicu notifikasi ke audiens; `rendah`/`normal` hanya muncul di daftar (agar tidak spam). *(USULAN)* |
+| BR-40 | `audience` (`target_audience`): `semua` (`all`), `siswa`, `guru`, `wali`. `wali` disimpan tetapi tidak menghasilkan notifikasi/penampilan (D-13). `class_id` opsional → hanya siswa kelas itu (pengumuman kelas). Siswa melihat pengumuman `status = 'published'` dengan audiens `semua`, `siswa`, dan (jika `class_id` terisi) kelasnya sendiri. Admin/guru melihat: `semua`, `guru`, `siswa` (semua kelas). Audiens `guru` mencakup **staf (guru dan admin)**. |
+| BR-41 | Pengumuman `type=libur` (`category=holiday`, `status=published`) pada rentang `event_date..end_date` membuat hari tersebut non-sekolah (BR-10). Menerbitkan/menghapus libur yang sudah lewat tidak mengubah record lama. |
+| BR-42 | **Statistik kalender bulan M:** `total_agenda` = jumlah pengumuman `published` dengan `event_date` (atau rentang) beririsan dengan M; `agenda_penting` = `priority ∈ {penting, urgent}` **atau** `type=penting`; `libur_nasional` = `type=libur`; `sedang_berlangsung` = event yang mencakup hari ini (WIB). Jumlah "dalam minggu ini" dikembalikan bersama `agenda_penting`. |
+| BR-43 | Pengumuman mendukung `status` ∈ `draft | published` (default saat diterbitkan tanpa status eksplisit = `published`, sesuai `02_PRD.md` US-51 AC3). Admin/guru dapat mengubah/hapus pengumuman; perubahan tercatat. |
+| BR-44 | Prioritas `urgent`/`penting` saat `published` memicu notifikasi ke audiens; `rendah`/`normal` hanya muncul di daftar (agar tidak spam). *(USULAN)* |
 
 ### 3.7 Notifikasi
 
@@ -198,12 +214,12 @@ Notifikasi bersifat **in-app** (REST), tanpa push di v1 (D-24).
 
 | ID | Aturan |
 |----|--------|
-| BR-70 | Foto presensi/enrollment: JPEG/PNG, ≤ `PHOTO_MAX_MB` (`USULAN` 3), dinormalisasi (orientasi EXIF dibaca, metadata dibuang), sisi terpanjang dibatasi. Avatar: JPG/PNG/WebP ≤ 2 MB (sesuai FE). Lampiran izin: PDF/JPG/PNG ≤ 5 MB (sesuai FE). Tipe diverifikasi dari **isi file** (magic bytes), bukan hanya ekstensi/header. |
+| BR-70 | Foto presensi/enrollment: JPEG/PNG, ≤ `PHOTO_MAX_MB` (`USULAN` 3), dinormalisasi (orientasi EXIF dibaca, metadata dibuang), sisi terpanjang dibatasi. Avatar: JPG/PNG/WebP ≤ 2 MB (sesuai FE & `05_DESIGN_SYSTEM.md` §10). Lampiran izin: PDF/JPG/PNG ≤ 5 MB (sesuai FE & `05_DESIGN_SYSTEM.md` §10). Tipe diverifikasi dari **isi file** (magic bytes), bukan hanya ekstensi/header. |
 | BR-71 | Retensi foto presensi: `ATTEMPT_PHOTO_RETENTION_DAYS` (`TBD`, usulan 90); embedding & foto enrollment: selama siswa aktif atau hingga ditarik persetujuan. |
 
 ---
 
-## 4. State Machine
+## 4. State Machine & Kontrak Semantik UI (`05_DESIGN_SYSTEM.md` §7)
 
 ### 4.1 Status presensi harian
 
@@ -216,26 +232,38 @@ alpa ─────────leave approved (koreksi, BR-27)─────�
 ```
 Tidak ada status antara ("menunggu validasi"): setelah wajah cocok, record final.
 
-### 4.2 Hasil verifikasi wajah (per attempt)
+| Nilai API | Label UI (`05_DESIGN_SYSTEM.md` §7.1) | Catatan / Keterangan Default |
+|-----------|---------------------------------------|------------------------------|
+| `hadir` | **Hadir** | `"Tepat Waktu"` |
+| `terlambat` | **Terlambat** | `"Terlambat (N menit) - <alasan>"` |
+| `izin` | **Izin** | `"Izin"` |
+| `sakit` | **Sakit** | `"Sakit"` |
+| `alpa` | **Alpa** *(baku DS-03)* | `"Tanpa Keterangan"` |
+| `belum_hadir` | **Belum Hadir** | Status virtual pada rekap/dashboard sebelum cutoff |
+| `belum_presensi` | **Belum Presensi** | Status harian siswa pada `GET /api/me/attendance/today` |
 
-| `face_result` | Arti | `outcome` attempt |
-|---------------|------|-------------------|
-| `match` | Skor ≥ ambang | `recorded` |
-| `no_match` | Skor < ambang | `rejected_face` |
-| `no_face` · `multiple_faces` · `low_quality` | Foto tidak layak | `rejected_face` |
-| `error` | AI tidak tersedia/galat | `error` |
+### 4.2 Hasil verifikasi wajah (`face_result` — baca-saja)
+
+| `face_result` | Label UI (`05_DESIGN_SYSTEM.md` §7.2) | Arti | `outcome` attempt |
+|---------------|---------------------------------------|------|-------------------|
+| `match` | **Cocok** | Skor ≥ ambang | `recorded` |
+| `no_match` | **Tidak cocok** | Skor < ambang | `rejected_face` |
+| `no_face` | **Wajah tidak terdeteksi** | 0 wajah | `rejected_face` |
+| `multiple_faces` | **Lebih dari satu wajah** | >1 wajah | `rejected_face` |
+| `low_quality` | **Foto kurang jelas** | Kualitas tidak lolos | `rejected_face` |
+| `error` | **Gagal diproses** | AI tidak tersedia/galat | `error` |
 
 ### 4.3 Surat izin
 
 ```text
-menunggu ──guru setujui──▶ disetujui   (terminal)
-menunggu ──guru tolak────▶ ditolak     (terminal)
-menunggu ──siswa batalkan▶ dibatalkan  (terminal)
+menunggu ──guru/admin setujui──▶ disetujui   (terminal, Label: "Disetujui")
+menunggu ──guru/admin tolak────▶ ditolak     (terminal, Label: "Ditolak")
+menunggu ──siswa batalkan──────▶ dibatalkan  (terminal, Label: "Dibatalkan")
 ```
 
 ### 4.4 Akun admin & guru
 
-Dikelola **di database**: `status` `active` ⇄ `inactive` (diubah langsung); dihapus = baris dihapus (sesi ikut terhapus via `ON DELETE CASCADE`, token langsung tidak berlaku). Tidak ada alur registrasi/aktivasi/OAuth.
+Dikelola **di database**: `status` `active` ⇄ `inactive` (`is_active` `1` ⇄ `0`); dihapus = baris dihapus (sesi ikut terhapus via `ON DELETE CASCADE`, token langsung tidak berlaku). Tidak ada alur registrasi/aktivasi/OAuth.
 
 ### 4.5 Outcome attempt presensi
 
@@ -260,11 +288,11 @@ Legenda **Akses**: 🌐 publik · 🔑 terautentikasi (semua role) · 👩‍�
 | `POST /api/auth/reset-password` | 🌐 | P0 | US-05 |
 | `POST /api/auth/logout` | 🔑 | P0 | US-06 |
 | `GET /api/auth/me` | 🔑 | P0 | US-62 |
-| `PATCH /api/auth/me` (alias `/api/auth/profile`) | 🔑 | P0 | US-62 |
-| `PUT /api/auth/me/password` (alias `/api/auth/password`) | 🔑 | P0 | US-62 |
-| `POST /api/auth/me/avatar` · `DELETE /api/auth/me/avatar` | 🔑 | P0 | US-62 |
+| `PATCH /api/auth/me` (alias `PUT /api/auth/me`, `PATCH/PUT /api/auth/profile`) | 🔑 | P0 | US-62 |
+| `PUT /api/auth/me/password` (alias `PATCH /api/auth/me/password`, `PUT/PATCH /api/auth/password`) | 🔑 | P0 | US-62 |
+| `POST /api/auth/me/avatar` · `DELETE /api/auth/me/avatar` (alias `/api/auth/avatar`) | 🔑 | P0 | US-62 |
 | `GET /api/auth/sessions` | 🔑 | P0 | US-62 |
-| `DELETE /api/auth/sessions/:id` | 🔑 | P1 | — |
+| `DELETE /api/auth/sessions/:sessionId` | 🔑 | P1 | — |
 
 #### `POST /api/auth/admin/login` · `POST /api/auth/login`
 Request:
@@ -282,8 +310,8 @@ Response 200:
   }
 }
 ```
-`/auth/login` menerima `siswa` dan `admin` (mobile); `/auth/admin/login` menerima `admin` dan `guru` (web). Untuk siswa `user` tambahan: `"nisn": "0064892104", "class": { "id": 2, "name": "Kelas 8" }, "absence_number": 5`.
-Error: 400 `VALIDATION_ERROR`, 401 `INVALID_CREDENTIALS`, 403 `ROLE_NOT_ALLOWED` / `ACCOUNT_NOT_ACTIVE`, 429 `RATE_LIMITED`.
+`/auth/mobile/login` menerima `siswa`; `/auth/admin/login` (`/auth/web/login`) menerima `admin` dan `guru`. Untuk siswa `user` menyertakan `"nisn": "0064892104", "class": { "id": 2, "name": "Kelas 8" }, "absence_number": 5`.
+Error: 400 `VALIDATION_ERROR`, 401 `INVALID_CREDENTIALS` (`"Login gagal! Email atau kata sandi salah."`), 403 `ROLE_NOT_ALLOWED` / `ACCOUNT_NOT_ACTIVE`, 429 `RATE_LIMITED`.
 
 #### `POST /api/auth/oauth/google` (khusus siswa di mobile — US-02B, BR-09B)
 Digunakan oleh aplikasi Flutter setelah memperoleh `id_token` dari Google Sign-In SDK.
@@ -350,11 +378,11 @@ Error: 400; 409 `EMAIL_TAKEN` / `NISN_ALREADY_REGISTERED`; 422 `NISN_NOT_IN_ROST
 ```json
 { "name": "Rina W.", "email": "rina@mtsalmaarif.sch.id" }
 ```
-200 → user terbaru. 400 `VALIDATION_ERROR` dengan `errors` per-field; 409 `EMAIL_TAKEN`. Siswa tidak dapat mengubah `name`/`email` lewat sini (gunakan `/me/profile`; email siswa = P1).
+200 → user terbaru. 400 `VALIDATION_ERROR` dengan `errors` per-field; 409 `EMAIL_TAKEN`. Siswa hanya dapat mengubah `phone`/`whatsapp_number` dan `address` pada profilnya (data akademik terkunci, US-61).
 #### `PUT /api/auth/me/password`
-`{ "current_password": "...", "new_password": "..." }` → 204. Salah sandi lama → 400 dengan `errors.current_password`. Sesi lain dicabut (BR-05).
+`{ "current_password": "...", "new_password": "..." }` → 200/204. Salah sandi lama → 400 dengan `errors.current_password`. Sesi lain dicabut (BR-05).
 #### Avatar
-`POST /api/auth/me/avatar` (multipart `file`, JPG/PNG/WebP ≤ 2 MB) → `{ "data": { "avatar_url": "<signed>" } }` · 413/415. `DELETE` → 204.
+`POST /api/auth/me/avatar` (multipart `file`/`avatar`, JPG/PNG/WebP ≤ 2 MB) → `{ "data": { "avatar_url": "<url>" } }` · 413/415. `DELETE` → 200/204.
 #### `GET /api/auth/sessions`
 ```json
 { "data": [
@@ -366,11 +394,12 @@ Error: 400; 409 `EMAIL_TAKEN` / `NISN_ALREADY_REGISTERED`; 422 `NISN_NOT_IN_ROST
 
 ---
 
-### 5.2 SCHOOL (konfigurasi publik-terautentikasi)
+### 5.2 SCHOOL & ROSTER (konfigurasi sekolah & data induk siswa)
 
 | Method & Path | Akses | Pri |
 |---------------|:----:|:---:|
 | `GET /api/school/config` | 🔑 | P0 |
+| `GET /api/roster` · `POST /api/roster` · `PUT /api/roster/:id` · `DELETE /api/roster/:id` | 👩‍🏫 | P0 |
 | `PATCH /api/school/geofence` | 🛡 | P1 |
 | `PUT /api/school/schedule/:dayOfWeek` | 🛡 | P1 |
 
@@ -383,7 +412,7 @@ Error: 400; 409 `EMAIL_TAKEN` / `NISN_ALREADY_REGISTERED`; 422 `NISN_NOT_IN_ROST
              "holiday_title": null }
 } }
 ```
-*(Nilai di atas hanya contoh format; sumber nilai = `school_settings` & `attendance_schedules`.)*
+*(Dipakai FE Web `Header`/`Footer` untuk menggantikan nama sekolah hardcode sesuai `05_DESIGN_SYSTEM.md` §6.1 & DS-05, serta Mobile untuk menggantikan koordinat & radius hardcode sesuai FC-07.)*
 
 ---
 
@@ -412,7 +441,7 @@ Gagal bila diterima < min → 422 `ENROLL_INSUFFICIENT_SAMPLES` (dengan daftar `
 | `POST /api/attendance/check-in` | 🎒 | P0 | US-11 |
 | `PATCH /api/attendance/:id/late-reason` | 🎒 | P0 | US-12 |
 | `GET /api/me/attendance/today` | 🎒 | P0 | US-13 |
-| `GET /api/me/attendance?month=YYYY-MM` | 🎒 | P0 | US-30 |
+| `GET /api/me/attendance?month=YYYY-MM` (alias `GET /api/calendar/attendance?month=YYYY-MM`) | 🎒 | P0 | US-30/52 |
 | `GET /api/me/reports/monthly?month=YYYY-MM` | 🎒 | P0 | US-31 |
 
 #### `POST /api/attendance/check-in`
@@ -420,7 +449,7 @@ Gagal bila diterima < min → 422 `ENROLL_INSUFFICIENT_SAMPLES` (dengan daftar `
 
 | Field | Tipe | Wajib | Ket. |
 |-------|------|:----:|------|
-| `photo` | file | ✅ | Foto kamera depan |
+| `photo` | file | ✅ | Foto kamera depan langsung (`05_DESIGN_SYSTEM.md` §10) |
 | `latitude`, `longitude` | number | ✅ | Derajat desimal |
 | `accuracy_m` | number | ✅ | Akurasi horizontal GPS |
 | `is_mocked` | boolean | ✅ | Dari `geolocator` (Android) |
@@ -452,26 +481,29 @@ Error bisnis (422 kecuali dicatat) — `code`:
 #### `GET /api/me/attendance/today`
 ```json
 { "data": {
-  "date": "2026-11-02", "is_school_day": true,
+  "date": "2026-11-02", "is_school_day": true, "holiday_title": null,
   "status": "belum_presensi",
   "record": null,
   "window": { "open": "06:00", "late_after": "07:15", "close": "12:00" },
   "enrolled": true
 } }
 ```
-`status` ∈ `belum_presensi | hadir | terlambat | izin | sakit | alpa`; bila ada record, `record` berisi `id, check_in_at, late_minutes, late_reason`.
+`status` ∈ `belum_presensi | hadir | terlambat | izin | sakit | alpa` (`05_DESIGN_SYSTEM.md` §7.1); bila ada record, `record` berisi `id, status, check_in_at, late_minutes, late_reason, late_note`.
 
-#### `GET /api/me/attendance?month=2026-10`
+#### `GET /api/me/attendance?month=2026-10` · `GET /api/calendar/attendance?month=2026-10`
 ```json
 { "data": {
   "month": "2026-10",
+  "today": "2026-10-31",
   "summary": { "hadir": 15, "terlambat": 2, "izin": 1, "sakit": 1, "alpa": 0, "school_days": 19, "attendance_percent": 89 },
   "days": [
-    { "date": "2026-10-01", "status": "hadir", "check_in_at": "…", "note": "Tepat Waktu" }
-  ]
+    { "date": "2026-10-01", "status": "hadir", "check_in_at": "…", "late_minutes": null, "late_reason": null, "note": "Tepat Waktu" }
+  ],
+  "events": [ ],
+  "calendar_marks": [ ]
 } }
 ```
-Hanya hari sekolah yang sudah lewat/hari ini yang ditampilkan.
+Mengembalikan riwayat harian, ringkasan statistik bulanan (`attendance_percent` integer `0–100`), serta `events` dan `calendar_marks` untuk tampilan kalender mobile (US-30 & US-52).
 
 #### `GET /api/me/reports/monthly?month=2026-10`
 `200 application/pdf`, `Content-Disposition: attachment; filename="Laporan-Presensi-<NISN>-2026-10.pdf"`. Isi: identitas siswa, periode, ringkasan, tabel harian. Error: 400 format bulan; 422 `MONTH_IN_FUTURE`.
@@ -496,9 +528,9 @@ Hanya hari sekolah yang sudah lewat/hari ini yang ditampilkan.
 ```
 Error: 400 (termasuk lampiran hilang → `errors.attachment`), 409 `LEAVE_OVERLAP`, 413/415, 422 `LEAVE_RANGE_INVALID`.
 
-`GET /api/leave-requests` — siswa: miliknya; guru: semua. Filter: `status`, `class_id` (guru), `nisn` (guru), `from`, `to`, `page`, `limit`. Setiap item menyertakan siswa (`nisn`, `name`, `class`) untuk guru.
+`GET /api/leave-requests` — siswa: miliknya; guru/admin: semua. Filter: `status`, `class_id` (staf), `nisn` (staf), `from`, `to`, `page`, `limit`. Setiap item menyertakan siswa (`nisn`, `name`, `class`) untuk staf.
 `PATCH /api/leave-requests/:id/review` — `{ "decision": "approve" | "reject", "note": "…" }` (`note` wajib bila `reject`). 200 → izin terbaru. 409 `LEAVE_ALREADY_REVIEWED`.
-`GET /api/leave-requests/:id/attachment` — mengembalikan berkas bila pemilik/guru (stream dengan `Content-Disposition: inline`).
+`GET /api/leave-requests/:id/attachment` — mengembalikan berkas bila pemilik/staf (stream dengan `Content-Disposition: inline`).
 
 ---
 
@@ -534,7 +566,7 @@ Default `date` = hari ini (WIB). `from`/`to` default = hari ini. Validasi: `from
   "calendar_marks": [ { "date": "2026-11-10", "type": "penting" }, { "date": "2026-11-28", "type": "libur" } ]
 } }
 ```
-`note` contoh: `"1 belum hadir"`. `announcements` = 5 terbaru yang relevan untuk guru; `calendar_marks` = penanda bulan berjalan untuk mini kalender.
+Pemetaan ke `StatCard` web (`05_DESIGN_SYSTEM.md` §7.6): `totals.total_students` (`default`), `totals.sudah_hadir` (`success`), `totals.terlambat_izin.total` (`warning`), `totals.belum_hadir_alpa.total` (`danger`). `generated_at` dipakai sebagai indikator waktu sinkron terakhir (`05_DESIGN_SYSTEM.md` §10).
 
 #### `GET /api/recap/overview`
 ```json
@@ -578,7 +610,7 @@ Default `date` = hari ini (WIB). `from`/`to` default = hari ini. Validasi: `from
 
 #### `GET /api/reports/attendance/export`
 `200` biner `.xlsx`, `Content-Disposition: attachment; filename="Rekap-Presensi-<YYYY-MM-DD>.xlsx"`.
-- **Satu hari:** satu sheet per kelas; kolom `No, NISN, Nama Siswa, Status, Waktu Presensi, Keterangan`; di bawahnya baris ringkasan (Total Siswa, Total Hadir, Total Alpa, Persentase Hadir) — meniru format FE yang sudah ada.
+- **Satu hari:** satu sheet per kelas; kolom `No, NISN, Nama Siswa, Status, Waktu Presensi, Keterangan`; di bawahnya baris ringkasan (Total Siswa, Total Hadir, Total Alpa, Persentase Hadir) — menggunakan label baku **"Alpa"** (`05_DESIGN_SYSTEM.md` DS-03).
 - **Rentang:** satu sheet per kelas; kolom `No, NISN, Nama Siswa, Hadir, Terlambat, Izin, Sakit, Alpa, % Hadir`.
 Error: 400 rentang tidak valid; 422 `NO_DATA`.
 
@@ -586,7 +618,7 @@ Error: 400 rentang tidak valid; 422 `NO_DATA`.
 
 ### 5.7 FACE SCANS (hasil scan wajah — **lihat saja**)
 
-Presensi wajah otomatis (BR-14); modul ini hanya menampilkan hasil scan untuk admin/guru. **Tidak ada endpoint ubah/setujui/tolak.**
+Presensi wajah otomatis (BR-14); modul ini hanya menampilkan hasil scan untuk admin/guru (`05_DESIGN_SYSTEM.md` §7.2 & §10, DS-07, DS-08). **Tidak ada endpoint ubah/setujui/tolak.**
 
 | Method & Path | Akses | Pri | US |
 |---------------|:----:|:---:|----|
@@ -623,25 +655,31 @@ Item daftar: `scan_id, nisn, name, class, attempted_at, result, similarity, outc
 | `GET /api/announcements` | 🔑 | P0 | US-40/52 |
 | `GET /api/announcements/:id` | 🔑 | P0 | US-52 |
 | `POST /api/announcements` | 👩‍🏫 | P0 | US-51 |
-| `PATCH /api/announcements/:id` | 👩‍🏫 | P0 | — |
-| `DELETE /api/announcements/:id` | 👩‍🏫 | P0 | — |
+| `PUT /api/announcements/:id` · `PATCH /api/announcements/:id` | 👩‍🏫 | P0 | US-51 |
+| `DELETE /api/announcements/:id` | 👩‍🏫 | P0 | US-51 |
 | `GET /api/calendar/events?month=YYYY-MM` | 🔑 | P0 | US-50/52 |
 | `GET /api/calendar/summary?month=YYYY-MM` | 👩‍🏫 | P0 | US-50 |
+| `GET /api/calendar/attendance?month=YYYY-MM` | 🎒 | P0 | US-30/52 |
 
 `POST /api/announcements`:
 ```json
 { "type": "akademik", "title": "Penilaian Tengah Semester", "description": "…",
   "event_date": "2026-11-10", "end_date": "2026-11-14",
-  "audience": "semua", "class_id": null, "priority": "penting" }
+  "audience": "semua", "class_id": null, "priority": "penting", "status": "published" }
 ```
-- `type`: `akademik|kegiatan|libur|penting|prestasi|info` · `audience`: `semua|siswa|guru|wali` · `priority`: `rendah|normal|penting|urgent`
-- `title` 3–150, `description` ≤ 5000, `end_date ≥ event_date` bila ada.
-201 → objek pengumuman (+`created_by`, `published_at`). 400 untuk validasi.
-`GET /api/announcements` — filter `type`, `from`, `to`, `class_id`, `q`, paginasi; urut `event_date` desc, lalu `published_at` desc. Disaring otomatis berdasarkan role (BR-40).
-`GET /api/calendar/events?month=2026-11` → `{ "data": [ { "id", "type", "title", "event_date", "end_date", "priority", "audience" } ] }`.
-`GET /api/calendar/summary` → `{ "data": { "month": "2026-11", "total_agenda": 6, "agenda_penting": { "total": 2, "this_week": 2 }, "libur_nasional": 1, "sedang_berlangsung": 1 } }`.
+- Mendukung istilah FSD/Design System §7.4 maupun alias FE:
+  - `type` / `category`: `akademik` (`academic`) | `kegiatan` (`activity`) | `libur` (`holiday`, `libur-cuti`) | `penting` (`important`) | `prestasi` (`achievement`) | `info`
+  - `audience` / `target_audience`: `semua` (`all`) | `siswa` | `guru` | `wali`
+  - `priority`: `rendah` (`low`) | `normal` | `penting` (`important`) | `urgent`
+  - `event_date` / `publish_date`: `YYYY-MM-DD`; `end_date >= event_date` bila ada
+  - `status`: `draft` | `published` (default `published`)
+- `title` 1–200 karakter, `description` wajib.
+201 → objek pengumuman (+`created_by`, `published_at`). 400 `VALIDATION_ERROR` dengan `errors` per-field.
+`GET /api/announcements` — filter `type`/`category`, `audience`/`target_audience`, `priority`, `status`, `from`, `to`, `class_id`, `q`; urut `publish_date` desc. Disaring otomatis berdasarkan role (BR-40).
+`GET /api/calendar/events?month=2026-11` → `{ "data": [ { "id", "type", "category", "title", "description", "event_date", "publish_date", "end_date", "priority", "priority_code", "audience", "target_audience", "class_id" } ] }`.
+`GET /api/calendar/summary?month=2026-11` → `{ "data": { "month": "2026-11", "today": "2026-11-02", "total_agenda": 6, "agenda_penting": { "total": 2, "this_week": 2 }, "libur_nasional": 1, "sedang_berlangsung": 1, "events": [ ], "days": [ ] } }`.
 
-> Klien mobile menggabungkan `calendar/events` dengan `me/attendance` untuk menandai status kehadiran pada kalender (Hadir, Izin/Sakit, Libur, Agenda).
+> Klien mobile dapat memanggil `GET /api/calendar/attendance?month=YYYY-MM` (atau `GET /api/me/attendance?month=YYYY-MM`) yang langsung menggabungkan `events`, `days`, `summary`, dan `calendar_marks` per tanggal (Hadir, Terlambat, Izin/Sakit, Alpa, Libur, Agenda).
 
 ---
 
@@ -684,8 +722,8 @@ Item: `{ "id", "type", "title", "body", "data": { "record_id": 811 }, "read_at":
 
 | Method & Path | Akses | Keterangan |
 |---------------|:----:|-----------|
-| `GET /api/health` | 🌐 | `{ "status": "ok", "db": "up", "ai": "up|down", "time": "…" }` — tanpa data sensitif |
-| `GET /api/files/:signedPath` | 🔑*(signed)* | Mengambil file bertanda tangan (TRD §9.5) |
+| `GET /api/health` | 🌐 | `{ "status": "ok", "db": "up", "ai": "up|down", "time": "…" }` — dipakai juga untuk lencana "Server Presensi Terhubung" di halaman login (`05_DESIGN_SYSTEM.md` §10) |
+| `GET /api/files/:signedPath` | 🔑*(signed)* | Mengambil file bertanda tangan / avatar (TRD §9.5) |
 
 ---
 
@@ -694,14 +732,14 @@ Item: `{ "id", "type", "title", "body", "data": { "record_id": 811 }, "read_at":
 | `code` | HTTP | Keterangan |
 |--------|:----:|-----------|
 | `VALIDATION_ERROR` | 400 | Input tidak valid (`errors` per-field) |
-| `UNAUTHENTICATED` | 401 | Token tidak ada/invalid/dicabut |
-| `INVALID_CREDENTIALS` | 401 | Login gagal |
+| `UNAUTHENTICATED` / `AUTH_REQUIRED` / `INVALID_TOKEN` / `SESSION_REVOKED` | 401 | Token tidak ada/invalid/dicabut |
+| `INVALID_CREDENTIALS` | 401 | Login gagal (`"Login gagal! Email atau kata sandi salah."`) |
 | `INVALID_OAUTH_TOKEN` | 401 | `id_token` Google OAuth tidak valid / kedaluwarsa / email belum terverifikasi |
 | `ROLE_NOT_ALLOWED` | 403 | Role tidak sesuai endpoint (termasuk non-siswa mencoba OAuth mobile) |
-| `ACCOUNT_NOT_ACTIVE` | 403 | Akun `inactive` |
-| `FORBIDDEN` | 403 | Tidak berhak |
-| `NOT_FOUND` | 404 | Tidak ada / bukan milik pemanggil |
-| `EMAIL_TAKEN` · `NISN_ALREADY_REGISTERED` · `OAUTH_ACCOUNT_CONFLICT` | 409 | Duplikat / konflik tautan akun |
+| `ACCOUNT_NOT_ACTIVE` / `ACCOUNT_INACTIVE` | 403 | Akun `inactive` |
+| `FORBIDDEN` | 403 | Tidak berhak (`"Akses ditolak."`) |
+| `NOT_FOUND` / `ANNOUNCEMENT_NOT_FOUND` / `ROSTER_NOT_FOUND` | 404 | Tidak ada / bukan milik pemanggil |
+| `EMAIL_TAKEN` / `EMAIL_ALREADY_REGISTERED` · `NISN_ALREADY_REGISTERED` · `OAUTH_ACCOUNT_CONFLICT` | 409 | Duplikat / konflik tautan akun |
 | `ALREADY_CHECKED_IN` · `HAS_APPROVED_LEAVE` · `FACE_NOT_ENROLLED` | 409 | Konflik presensi |
 | `LEAVE_OVERLAP` · `LEAVE_ALREADY_REVIEWED` | 409 | Konflik surat izin |
 | `NISN_NOT_IN_ROSTER` · `OAUTH_NISN_REQUIRED` | 422 | Registrasi / OAuth siswa membutuhkan atau gagal validasi NISN di roster |
@@ -737,7 +775,7 @@ Dicatat untuk: login admin/guru (sukses/gagal), akses detail hasil scan wajah, r
 | US-11/12/13 | `attendance/check-in` · `attendance/:id/late-reason` · `me/attendance/today` |
 | US-14 | Job alpa (BR-28/29) — tanpa endpoint |
 | US-20/21 | `leave-requests/*` |
-| US-30/31 | `me/attendance` · `me/reports/monthly` |
+| US-30/31 | `me/attendance` (`calendar/attendance`) · `me/reports/monthly` |
 | US-40 | `dashboard/summary` |
 | US-41 | `recap/overview` · `recap/classes*` |
 | US-42 | `face-scans*` (lihat saja) |
@@ -756,16 +794,16 @@ Dicatat untuk: login admin/guru (sukses/gagal), akses detail hasil scan wajah, r
 1. Skema validasi (Zod) di `packages/contract` + OpenAPI **ter-generate** (bukan ditulis tangan) sesuai bagian 5.
 2. Otorisasi per role teruji (positif & negatif; akses lintas-siswa → 404).
 3. Unit test aturan bisnis terkait (BR-xx) + integration test (MySQL nyata).
-4. Kode error sesuai §6; tidak ada stack trace/detail internal di respons.
+4. Kode error sesuai §6 & pesan siap tampil sesuai `05_DESIGN_SYSTEM.md` §8; tidak ada stack trace/detail internal di respons.
 5. Entri audit log untuk aksi sensitif (§7).
-6. Dapat dipanggil dari FE (web **dan** Flutter) tanpa mengubah kontrak (atau perubahan dicatat pada Change List).
-7. Kode error & bentuk respons diimpor dari `packages/contract`, tidak diduplikasi.
+6. Dapat dipanggil dari FE (web **dan** Flutter) tanpa mengubah kontrak (atau perubahan dicatat pada Change List `00_README_HANDOFF.md` §8).
+7. Nilai enum dan format data sesuai kontrak semantik `05_DESIGN_SYSTEM.md` §7 & §9.
 
 ---
 
 ## 10. Kontrak Lintas-Klien
 
-1. **Sumber tunggal:** skema Zod + daftar kode error (§6) + util waktu WIB di `packages/contract`.
+1. **Sumber tunggal:** skema Zod + daftar kode error (§6) + util waktu WIB di `packages/contract`, serta kontrak semantik UI di `05_DESIGN_SYSTEM.md` §7.
 2. **Flutter (mobile siswa):** menerima kontrak lewat file OpenAPI hasil generate; tidak ada paket TS bersama. Nama field `snake_case`, instant UTC ISO-8601, tanggal WIB `YYYY-MM-DD` (§1.1) harus diparse apa adanya di Dart. Untuk OAuth Google, Flutter memakai paket `google_sign_in`, mengambil `idToken`, dan mengirimkannya ke `POST /api/auth/oauth/google`.
 3. **Web (guru/admin):** tetap Vite/React; boleh tetap JS. Migrasi ke TS opsional per-file, memakai tipe dari `contract`.
 4. **Layanan AI (Flask):** bukan bagian kontrak klien; hanya dipanggil Express (TRD §7.2). Klien tidak pernah memanggil Flask.

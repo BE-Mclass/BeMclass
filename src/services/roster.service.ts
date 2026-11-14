@@ -7,8 +7,11 @@ const NISN_REGEX = /^\d{10}$/;
 export interface CreateRosterInput {
   nisn?: unknown;
   fullName?: unknown;
+  gender?: unknown;
+  birthDate?: unknown;
   classId?: unknown;
   attendanceNumber?: unknown;
+  guardianName?: unknown;
   parentPhone?: unknown;
   whatsappNumber?: unknown;
   address?: unknown;
@@ -101,9 +104,9 @@ export async function listStudentRoster(filters?: {
 }) {
   let sql = `
     SELECT
-      sr.id, sr.nisn, sr.full_name, sr.class_id,
+      sr.id, sr.nisn, sr.full_name, sr.gender, sr.birth_date, sr.class_id,
       c.name AS class_name, c.grade_level,
-      sr.attendance_number, sr.parent_phone, sr.whatsapp_number, sr.address,
+      sr.attendance_number, sr.guardian_name, sr.parent_phone, sr.whatsapp_number, sr.address,
       sr.user_id, u.email AS registered_email,
       sr.is_active, sr.created_at, sr.updated_at
     FROM student_roster sr

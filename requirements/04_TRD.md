@@ -1,13 +1,14 @@
 # 04 — Technical Requirements Document (TRD)
 
-> **Produk:** M-Class Backend · **Versi:** 1.3 · **Tanggal:** 11 November 2026
+> **Produk:** M-Class Backend · **Versi:** 1.4 · **Tanggal:** 12 November 2026
 > **Fungsi dokumen:** Cara membangun — arsitektur, stack, skema database, kontrak layanan AI, keamanan, deployment, dan **roadmap milestone**.
-> Perilaku & API: lihat `03_FSD.md` (sumber kebenaran fungsional). Keputusan: `D-xx` (00), `TD-xx` (dokumen ini).
+> Perilaku & API: lihat `03_FSD.md` (sumber kebenaran fungsional). Kontrak semantik UI, pesan, & format tampilan: lihat `05_DESIGN_SYSTEM.md`. Tujuan bisnis & risiko: `01_MRD.md`. Keputusan: `D-xx` (`00_README_HANDOFF.md`), `TD-xx` (dokumen ini).
 > Label: `USULAN` = nilai awal yang boleh disesuaikan · `TBD-kalibrasi` = harus diukur saat pilot.
 > **Versi library tidak dipatok di sini** — pasang versi stabil terbaru saat M0 dan kunci dengan lockfile.
 > **Revisi v1.1:** (1) akun admin/guru **dikelola di database** (tanpa registrasi/aktivasi/lupa sandi); (2) verifikasi wajah **otomatis dengan satu ambang** — tanpa zona review & tanpa status validasi; (3) role **`admin`** ditambahkan (`admin`, `guru`, `siswa`); (4) **presensi pulang dihapus** (tanpa kolom `check_out_at`/`checkout_*`).
 > **Revisi v1.2 (koreksi stack):** (0) **Tanpa Docker** — deployment langsung di host Linux (systemd + Nginx/Caddy), TD-17; (1) **Backend = Express + TypeScript + MySQL**, satu database; (2) **Flask tetap layanan AI internal** — tidak ada mesin wajah in-process di Node; (3) **Flutter tetap untuk mobile** — kontrak lewat **OpenAPI**, bukan paket TypeScript bersama; (4) **Web Vite/React dipertahankan**, migrasi ke TS opsional/bertahap memakai tipe dari paket kontrak `packages/contract`; (5) skema Prisma (15 tabel P0) = sumber kebenaran skema DB.
 > **Revisi v1.3 (OAuth Mobile Murid):** Penambahan dukungan teknis **Google Sign-In (OAuth 2.0 / OIDC `id_token`) khusus siswa di aplikasi mobile (Flutter)** (TD-18): verifikasi `id_token` Google di Express, kolom `google_id` & `oauth_provider` pada tabel `users`, variabel lingkungan `GOOGLE_CLIENT_ID`, serta alur penautan NISN ke roster siswa.
+> **Revisi v1.4 (Penyelarasan Design System & MRD):** (1) Penyelarasan DDL & layanan dengan kontrak semantik `05_DESIGN_SYSTEM.md` §7–§12 (termasuk `announcements.status` `draft`/`published`, pemetaan alias bilingual, label baku `"Alpa"` DS-03, serta penghapusan ketergantungan avatar eksternal `ui-avatars.com` DS-07); (2) pemetaan rekomendasi `DS-01`…`DS-08` dan `FC-01`…`FC-09` ke Milestone §14.
 
 ---
 
@@ -16,7 +17,7 @@
 ```mermaid
 flowchart LR
   subgraph Clients
-    W[Web Guru<br/>React + Vite · TS opsional]
+    W[Web Guru/Admin<br/>React + Vite · TS opsional]
     M[Mobile Siswa<br/>Flutter/Dart]
   end
   subgraph Server["Satu host Linux (systemd, tanpa Docker)"]
@@ -49,7 +50,7 @@ flowchart LR
 2. **Keputusan bisnis ada di Express** (threshold, status, geofence). Flask hanya menghitung (deteksi/embedding/skor).
 3. **Fail-closed:** jika AI tidak tersedia, presensi **tidak** diloloskan otomatis.
 4. **Waktu server otoritatif** (bukan jam perangkat) untuk status hadir/terlambat.
-5. **Konfigurasi, bukan hardcode** untuk jam, radius, threshold.
+5. **Konfigurasi, bukan hardcode** untuk jam, radius, threshold, dan nama sekolah (`school_settings`, DS-05).
 
 ### 1.1 Alur presensi (sequence)
 
@@ -64,13 +65,13 @@ sequenceDiagram
   API->>API: cek hari sekolah, jendela waktu, duplikat, mock/akurasi, jarak
   alt di luar radius / jam / mock
     API->>DB: simpan attempt (ditolak)
-    API-->>App: 422 + code
+    API-->>App: 422 + code + pesan tindakan (05_DESIGN_SYSTEM §8.3)
   else lolos pra-cek
     API->>AI: POST /v1/verify (foto + embedding referensi)
     AI-->>API: similarity, jumlah wajah, kualitas
     API->>API: keputusan wajah (cocok → catat / tidak cocok → tolak)
     API->>DB: transaksi: attempt + record final (+ notifikasi)
-    API-->>App: 201 record, requires_late_reason?
+    API-->>App: 201 record, requires_late_reason?, message: "Absensi Masuk Berhasil!"
   end
 ```
 
@@ -107,18 +108,18 @@ sequenceDiagram
 
 | Komponen | Bahasa | Cara berbagi kontrak |
 |----------|--------|----------------------|
-| `packages/contract` | TypeScript murni (tanpa dependensi Node/DB/Express) | Sumber: skema **Zod**, tipe turunan, daftar kode error, util waktu WIB & status terlambat |
-| `apps/api` (Express) | TypeScript | **Import langsung** paket `contract` |
+| `packages/contract` | TypeScript murni (tanpa dependensi Node/DB/Express) | Sumber: skema **Zod**, tipe turunan, daftar kode error, enum semantik (`05_DESIGN_SYSTEM.md` §7), util waktu WIB & status terlambat |
+| `apps/api` / `backend_mclass` (Express) | TypeScript | **Import langsung** paket `contract` / util domain |
 | `apps/web` (Vite/React) | JS sekarang; **TS opsional bertahap** | Import tipe/skema dari `contract` hanya setelah file terkait dimigrasi ke TS |
 | Mobile (Flutter) | Dart | **Tidak** memakai paket TS. Kontrak = **OpenAPI** yang di-generate dari skema Zod (`openapi/`); klien Dart ditulis tangan atau di-generate dari file OpenAPI |
 | `mclass-ai` (Flask) | Python | Kontrak internal terpisah (§7.2); **tidak** terkait paket `contract` |
 
 Aturan:
-1. **Satu database** (MySQL 8) hanya diakses oleh Express (Prisma). Flask & Flutter tidak pernah menyentuh DB.
-2. **Skema DB:** `schema.prisma` adalah sumber kebenaran (15 tabel P0 + `device_tokens` P1). DDL §4.2 adalah referensi ekuivalen; bila berbeda, selaraskan dokumen ini dengan Prisma, bukan sebaliknya.
+1. **Satu database** (MySQL 8) hanya diakses oleh Express. Flask & Flutter tidak pernah menyentuh DB.
+2. **Skema DB:** `schema.prisma` / `src/database/schema.sql` adalah sumber kebenaran (15 tabel P0 + `device_tokens` P1). DDL §4.2 adalah referensi lengkap.
 3. **Tidak ada mesin wajah in-process:** seluruh deteksi/embedding/verifikasi berjalan di Flask (§7). Node tidak memuat model ML.
 4. `contract` tidak boleh mengimpor Prisma, Express, `fs`, atau API khusus Node, agar aman dibundel untuk web.
-5. Perubahan endpoint = ubah skema Zod → regenerasi OpenAPI → catat di Change List FE (web **dan** Flutter).
+5. Perubahan endpoint = ubah skema Zod → regenerasi OpenAPI → catat di Change List FE (`00_README_HANDOFF.md` §8) & Design System (`05_DESIGN_SYSTEM.md` §7).
 
 ---
 
@@ -128,19 +129,19 @@ Aturan:
 |---------|---------|------------------|
 | Runtime | Node.js (LTS aktif) + TypeScript (strict) | Sesuai keputusan Anda |
 | Framework | Express (versi stabil terbaru) | Sesuai keputusan Anda |
-| Validasi & kontrak | **Zod** di `packages/contract` (strict, tolak field tak dikenal) | Satu sumber untuk validasi + tipe + OpenAPI; dipakai Express (dan web bila TS) |
+| Validasi & kontrak | **Zod** / validator domain strict (tolak field tak dikenal) | Satu sumber untuk validasi + tipe + OpenAPI; pesan error Bahasa Indonesia sesuai `05_DESIGN_SYSTEM.md` §8 |
 | Mobile | **Flutter (Dart)** — tetap (`google_sign_in` untuk OAuth murid) | Konsumsi API lewat OpenAPI (TD-13, TD-18) |
 | Web | **React + Vite** — tetap; TS opsional | Tipe dari `contract` (TD-14) |
 | Monorepo | pnpm workspaces (`USULAN`) | Berbagi `contract` antara `api` dan `web` |
 | Database | **MySQL 8**, InnoDB, `utf8mb4` | Sesuai keputusan Anda |
-| Akses data | **Prisma** (migrasi + tipe) + `$queryRaw` untuk agregasi | TD-02; alternatif: Kysely/Drizzle/mysql2 sesuai modul |
-| Auth & OAuth | JWT (`jsonwebtoken` atau `jose`) + `auth_sessions` + verifikasi Google OIDC (`google-auth-library` / Google `tokeninfo` & JWKS) | D-16, TD-18 |
+| Akses data | **Prisma** / **`mysql2/promise`** (parameterized query) | TD-02; query terparameter wajib untuk mencegah SQL injection |
+| Auth & OAuth | JWT (`jsonwebtoken` atau `jose`) + `auth_sessions` (`user_sessions`) + verifikasi Google OIDC (`google-auth-library` / Google `tokeninfo` & JWKS) | D-16, TD-18 |
 | Hash sandi | `argon2` (argon2id) | D-17 |
-| Upload | `multer` (memory, limit ketat) → validasi magic bytes → simpan | BR-70 |
+| Upload | `multer` / multipart parser (memory, limit ketat) → validasi magic bytes → simpan | BR-70 |
 | Gambar | `sharp` (rotasi EXIF, hapus metadata, resize) | |
 | Email | `nodemailer` (SMTP) | OQ-06 |
 | Job terjadwal | `node-cron` + `GET_LOCK` MySQL + tabel `job_runs` | TD-05 |
-| Laporan | `exceljs` (xlsx), `pdfkit` (PDF) | D-14 |
+| Laporan | `exceljs` (xlsx, label baku **"Alpa"** DS-03), `pdfkit` (PDF) | D-14 |
 | Keamanan HTTP | `helmet`, `cors` (allowlist), `express-rate-limit` | |
 | Log | `pino` (JSON, redaksi field sensitif) + `pino-http` | |
 | Dokumentasi API | OpenAPI dari skema Zod (mis. `zod-to-openapi`) | NFR-08 |
@@ -153,23 +154,23 @@ Aturan:
 | ID | Keputusan | Alasan |
 |----|-----------|--------|
 | TD-01 | Arsitektur **modular monolith** (satu proses API, modul per fitur) | Skala sekolah tunggal; microservice tidak perlu |
-| TD-02 | Prisma + raw SQL untuk agregasi rekap | Tipe aman untuk CRUD; SQL eksplisit untuk laporan |
-| TD-03 | Semua waktu disimpan UTC (`DATETIME(3)`); sesi DB `time_zone='+00:00'`; konversi ke WIB di lapisan domain (`Asia/Jakarta`) | D-19 |
+| TD-02 | Parameterized SQL / Prisma untuk CRUD & agregasi rekap | Tipe aman untuk CRUD; SQL eksplisit untuk laporan |
+| TD-03 | Semua waktu disimpan UTC (`DATETIME(3)` / `DATETIME`); sesi DB `time_zone='+00:00'`; konversi ke WIB di lapisan domain (`Asia/Jakarta`) | D-19 |
 | TD-04 | File disimpan di volume lokal privat; antarmuka `StorageProvider` agar bisa diganti S3-compatible | Sederhana sekarang, bisa dipindah |
 | TD-05 | Job in-process dengan kunci `GET_LOCK` + `job_runs` (idempoten) | Aman bila >1 instance; tanpa Redis |
 | TD-06 | Tanpa Redis/antrian di v1; rate limit & cache memakai memori proses | Skala kecil; tambah Redis bila multi-instance |
 | TD-07 | Verifikasi wajah **sinkron** (request menunggu hasil AI) | Waktu respons target ≤ 5 dtk; UX sederhana |
 | TD-08 | Embedding disimpan terenkripsi aplikasi (AES-256-GCM) di MySQL | Data biometrik; cegah baca langsung dari dump DB |
-| TD-09 | URL file bertanda tangan HMAC berumur pendek | `<img>` tidak bisa kirim header Bearer |
+| TD-09 | URL file bertanda tangan HMAC berumur pendek / endpoint terproteksi; **tanpa layanan avatar pihak ketiga (`ui-avatars.com`, DS-07)** | Privasi data siswa & kompatibilitas `<img>` |
 | TD-10 | Verifikasi wajah **satu ambang & otomatis**; tidak ada status/tabel validasi | D-28 |
 | TD-11 | Akun admin/guru dikelola di DB; tidak ada kode registrasi/aktivasi staf | D-04 |
 | TD-12 | **Satu backend TypeScript** (Express) + **satu database** MySQL; Flask hanya layanan internal | Koreksi v1.2 |
 | TD-13 | Flutter tetap; kontrak mobile = **OpenAPI** hasil generate dari Zod, bukan paket TS | Dart tidak bisa memakai paket TS |
 | TD-14 | Web Vite/React tetap; migrasi TS opsional & bertahap, memakai tipe/skema dari `packages/contract` | Tanpa rewrite besar |
-| TD-15 | Util waktu WIB + keputusan status `hadir/terlambat` hidup di `packages/contract` sebagai fungsi murni (tanpa I/O) | Dipakai ulang Express & web; satu implementasi |
+| TD-15 | Util waktu WIB + keputusan status `hadir/terlambat` hidup di `packages/contract` / `src/utils/wib-time.ts` sebagai fungsi murni (tanpa I/O) | Dipakai ulang Express & web; satu implementasi |
 | TD-16 | **Tidak ada face engine in-process** di Node; verifikasi wajah hanya via Flask (§7) | Koreksi v1.2 |
 | TD-17 | **Deployment tanpa Docker:** proses langsung di host Linux (systemd/PM2) + Nginx/Caddy; Flask & MySQL hanya di localhost; versi runtime dikunci (lockfile, `.nvmrc`, `requirements.txt`) | Keputusan pemilik proyek; mengurangi kompleksitas operasional |
-| TD-18 | **Google OAuth Mobile Siswa berbasis OIDC `id_token`:** Aplikasi Flutter melakukan Google Sign-In di sisi perangkat dan mengirimkan `id_token` ke `POST /api/auth/oauth/google`. Backend memverifikasi token secara kriptografis/ke Google (`iss`, `aud` cocok dengan `GOOGLE_CLIENT_ID`, `exp`, `email_verified=true`) lalu menukar dengan JWT sesi M-Class (`auth_sessions`) agar seluruh mekanisme pencabutan sesi dan otorisasi tetap seragam. | Aman untuk mobile native tanpa perlu menyimpan client secret di perangkat |
+| TD-18 | **Google OAuth Mobile Siswa berbasis OIDC `id_token`:** Aplikasi Flutter melakukan Google Sign-In di sisi perangkat dan mengirimkan `id_token` ke `POST /api/auth/oauth/google`. Backend memverifikasi token secara kriptografis/ke Google (`iss`, `aud` cocok dengan `GOOGLE_CLIENT_ID`, `exp`, `email_verified=true`) lalu menukar dengan JWT sesi M-Class (`auth_sessions`/`user_sessions`) agar seluruh mekanisme pencabutan sesi dan otorisasi tetap seragam. | Aman untuk mobile native tanpa perlu menyimpan client secret di perangkat |
 
 ---
 
@@ -181,8 +182,8 @@ Aturan:
 |----------|------------------|---------|
 | `NODE_ENV` | `production` | |
 | `PORT` | `3000` | Sesuai proxy dev web |
-| `DATABASE_URL` | `mysql://user:pass@db:3306/mclass` | Wajib |
-| `CORS_ORIGINS` | `https://web.domain.sch.id` | Daftar dipisah koma; **jangan `*`** |
+| `DATABASE_URL` / `DB_HOST,DB_PORT,DB_USER,DB_PASSWORD,DB_NAME` | `mysql://user:pass@127.0.0.1:3306/mclass` | Wajib |
+| `CORS_ORIGINS` | `https://web.domain.sch.id` | Daftar dipisah koma; **jangan `*`** di production |
 | `JWT_SECRET` | ≥ 32 byte acak | Wajib, rahasia |
 | `SESSION_TTL_WEB` / `SESSION_TTL_MOBILE` | `7d` / `30d` | `USULAN` |
 | `GOOGLE_CLIENT_ID` | `xxx.apps.googleusercontent.com` | Daftar Client ID Google OAuth (Android/iOS/Web serverClientId, bisa dipisah koma) untuk memvalidasi klaim `aud`/`azp` pada `id_token` mobile siswa (TD-18) |
@@ -206,7 +207,7 @@ Aturan:
 | `ATTEMPT_PHOTO_RETENTION_DAYS` | `TBD` (usulan 90) | BR-71 |
 | `LOG_LEVEL` | `info` | |
 
-Validasi env **saat boot** dengan Zod; aplikasi **gagal start** bila variabel wajib hilang/tidak valid. Sediakan `.env.example` tanpa rahasia.
+Validasi env **saat boot**; aplikasi **gagal start** bila variabel wajib hilang/tidak valid. Sediakan `.env.example` tanpa rahasia.
 
 ### 3.2 Lingkungan
 
@@ -240,7 +241,8 @@ erDiagram
 
 ### 4.2 DDL
 
-> **Sumber kebenaran skema = `schema.prisma`** (15 tabel P0 + `device_tokens` P1); DDL di bawah adalah referensi ekuivalen (TRD §1.2). Semua `DATETIME(3)` = UTC. `DATE` = tanggal kalender WIB (`attendance_date`, `start_date`, dst.). Engine InnoDB, charset `utf8mb4`, collation `utf8mb4_0900_ai_ci`.
+> **Sumber kebenaran skema = `schema.prisma` / `src/database/schema.sql`** (15 tabel P0 + `device_tokens` P1); DDL di bawah adalah referensi ekuivalen (TRD §1.2). Semua `DATETIME(3)` = UTC. `DATE` = tanggal kalender WIB (`attendance_date`, `start_date`, dst.). Engine InnoDB, charset `utf8mb4`, collation `utf8mb4_0900_ai_ci` / `utf8mb4_unicode_ci`.
+> *(Catatan kompatibilitas implementasi saat ini di `src/database/schema.sql`: tabel roster siswa dinamai `student_roster` dan tabel sesi dinamai `user_sessions`; layanan `announcement.service.ts` mendukung kolom `category`/`type`, `publish_date`/`event_date`, `target_audience`/`audience`, serta `status ENUM('draft','published')`.)*
 
 ```sql
 CREATE TABLE school_settings (
@@ -263,8 +265,8 @@ CREATE TABLE users (
   google_id VARCHAR(191) NULL,                     -- Google OIDC 'sub' (khusus siswa mobile OAuth)
   oauth_provider ENUM('local','google') NOT NULL DEFAULT 'local',
   phone VARCHAR(20) NULL,
-  avatar_path VARCHAR(255) NULL,
-  status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  avatar_path VARCHAR(255) NULL,                   -- (atau photo_url)
+  status ENUM('active','inactive') NOT NULL DEFAULT 'active', -- (atau is_active TINYINT(1))
   last_login_at DATETIME(3) NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -275,30 +277,30 @@ CREATE TABLE users (
 
 CREATE TABLE classes (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  grade TINYINT UNSIGNED NOT NULL,                 -- 7, 8, 9
+  grade TINYINT UNSIGNED NOT NULL,                 -- 7, 8, 9 (atau grade_level)
   section VARCHAR(10) NOT NULL DEFAULT '',         -- '' bila tanpa paralel (A/B/...)
   name VARCHAR(40) NOT NULL,                       -- "Kelas 7"
-  academic_year VARCHAR(9) NOT NULL,               -- "2026/2027"
+  academic_year VARCHAR(9) NOT NULL DEFAULT '2026/2027',
   homeroom_teacher_id BIGINT UNSIGNED NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   UNIQUE KEY uq_class (grade, section, academic_year),
   CONSTRAINT fk_class_homeroom FOREIGN KEY (homeroom_teacher_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
-CREATE TABLE students (
+CREATE TABLE students (                            -- (alias implementasi: student_roster)
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT UNSIGNED NULL,                    -- NULL sampai siswa registrasi / login OAuth + klaim NISN
   nisn CHAR(10) NOT NULL,
   nis VARCHAR(20) NULL,
-  name VARCHAR(150) NOT NULL,                      -- nama resmi dari roster
-  gender ENUM('L','P') NOT NULL,
+  name VARCHAR(150) NOT NULL,                      -- nama resmi dari roster (full_name)
+  gender ENUM('L','P') NOT NULL DEFAULT 'L',
   birth_date DATE NULL,
-  absence_number SMALLINT UNSIGNED NULL,
+  absence_number SMALLINT UNSIGNED NULL,           -- (attendance_number)
   class_id BIGINT UNSIGNED NOT NULL,
-  phone VARCHAR(20) NULL,
+  phone VARCHAR(20) NULL,                          -- (whatsapp_number)
   address VARCHAR(255) NULL,
   guardian_name VARCHAR(150) NULL,
-  guardian_phone VARCHAR(20) NULL,
+  guardian_phone VARCHAR(20) NULL,                 -- (parent_phone)
   biometric_consent_at DATETIME(3) NULL,
   is_active TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -310,7 +312,7 @@ CREATE TABLE students (
   CONSTRAINT fk_students_class FOREIGN KEY (class_id) REFERENCES classes(id)
 ) ENGINE=InnoDB;
 
-CREATE TABLE auth_sessions (
+CREATE TABLE auth_sessions (                       -- (alias implementasi: user_sessions)
   id CHAR(36) NOT NULL PRIMARY KEY,                -- jti (UUID)
   user_id BIGINT UNSIGNED NOT NULL,
   platform ENUM('web','android','ios','unknown') NOT NULL DEFAULT 'unknown',
@@ -434,22 +436,23 @@ CREATE TABLE leave_requests (
 
 CREATE TABLE announcements (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  type ENUM('akademik','kegiatan','libur','penting','prestasi','info') NOT NULL,
-  title VARCHAR(150) NOT NULL,
-  description TEXT NULL,
-  event_date DATE NOT NULL,
+  type ENUM('akademik','kegiatan','libur','penting','prestasi','info') NOT NULL, -- (atau category ENUM('academic','activity','holiday','important','achievement','info'))
+  title VARCHAR(200) NOT NULL,
+  description TEXT NOT NULL,
+  event_date DATE NOT NULL,                        -- (atau publish_date)
   end_date DATE NULL,
-  audience ENUM('semua','siswa','guru','wali') NOT NULL DEFAULT 'semua',
+  audience ENUM('semua','siswa','guru','wali') NOT NULL DEFAULT 'semua', -- (atau target_audience)
   class_id BIGINT UNSIGNED NULL,
-  priority ENUM('rendah','normal','penting','urgent') NOT NULL DEFAULT 'normal',
-  created_by BIGINT UNSIGNED NOT NULL,
-  published_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  priority ENUM('rendah','normal','penting','urgent') NOT NULL DEFAULT 'normal', -- (atau low/normal/important/urgent)
+  status ENUM('draft','published') NOT NULL DEFAULT 'published',
+  created_by BIGINT UNSIGNED NULL,
+  published_at DATETIME(3) NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   deleted_at DATETIME(3) NULL,
-  KEY idx_ann_dates (event_date, end_date),
+  KEY idx_ann_dates (status, event_date, end_date),
   KEY idx_ann_type (type, deleted_at),
   CONSTRAINT fk_ann_class FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE SET NULL,
-  CONSTRAINT fk_ann_creator FOREIGN KEY (created_by) REFERENCES users(id)
+  CONSTRAINT fk_ann_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 CREATE TABLE notifications (
@@ -503,10 +506,10 @@ CREATE TABLE device_tokens (
 ### 4.3 Catatan model
 
 - **`attendance_records`** satu baris per siswa per hari (unique). Record **final seketika** saat wajah cocok — tidak ada status menunggu validasi (BR-14).
-- **Siswa tanpa record** = "belum hadir" secara virtual (dihitung di query, bukan baris).
+- **Siswa tanpa record** = "belum hadir" (`belum_hadir` pada rekap web, `belum_presensi` pada beranda siswa mobile, sesuai `05_DESIGN_SYSTEM.md` §7.1) secara virtual (dihitung di query, bukan baris).
 - **`attendance_attempts`** menyimpan *semua* percobaan → sumber daftar "di luar radius" & analitik penolakan.
 - **Penghapusan siswa** (`ON DELETE CASCADE`) menghapus biometrik & riwayat — gunakan `is_active=0` untuk siswa lulus/pindah; hapus fisik hanya untuk permintaan penghapusan data.
-- **Akun admin/guru tanpa registrasi:** dikelola langsung di tabel `users` (insert/update/delete). Contoh (hash dibuat dengan `hash-password`, §12.4):
+- **Akun admin/guru tanpa registrasi:** dikelola langsung di tabel `users` (insert/update/delete) atau melalui CLI `src/database/cli-user.ts`. Contoh:
   ```sql
   INSERT INTO users (role, name, email, password_hash, status)
   VALUES ('admin', 'Pengelola Sekolah', 'admin@sekolah.sch.id', '<argon2id-hash>', 'active');
@@ -516,7 +519,7 @@ CREATE TABLE device_tokens (
   ```
 - **Google OAuth Siswa (`users.google_id` & `users.oauth_provider`):**
   - Siswa yang sudah pernah mendaftar manual (`oauth_provider='local'`) lalu login dengan Google OAuth menggunakan email yang sama akan otomatis menautkan `google_id` pada baris `users` miliknya.
-  - Siswa yang langsung masuk dengan Google OAuth pertama kali dan menyerahkan NISN valid akan dibuatkan baris `users` (`oauth_provider='google'`, `google_id=<sub>`) dan ditautkan ke `students.user_id`.
+  - Siswa yang langsung masuk dengan Google OAuth pertama kali dan menyerahkan NISN valid akan dibuatkan baris `users` (`oauth_provider='google'`, `google_id=<sub>`) dan ditautkan ke `students.user_id` (`student_roster.user_id`).
 - **Seed minimal:** 1 baris `school_settings`, 3 baris `classes` (7, 8, 9), 7 baris `attendance_schedules`.
 
 ### 4.4 Query inti agregasi (acuan implementasi BR-30/31)
@@ -548,13 +551,14 @@ Uji wajib: `hadir + terlambat + izin + sakit + alpa + belum_hadir = total_studen
 | Fungsi | Spesifikasi |
 |--------|-------------|
 | `nowUtc()` | Satu-satunya sumber "sekarang" (bisa di-*inject* untuk test) |
-| `toWibDate(instant)` | Tanggal kalender di `Asia/Jakarta` |
+| `toWibDate(instant)` | Tanggal kalender di `Asia/Jakarta` (`YYYY-MM-DD`) |
+| `toWibMonth(instant)` | Bulan kalender di `Asia/Jakarta` (`YYYY-MM`) |
 | `wibTimeOfDay(instant)` | `HH:mm:ss` WIB untuk dibandingkan dengan `TIME` jadwal |
 | `haversineMeters(a, b)` | Jarak lingkaran besar (R = 6.371.000 m), hasil dibulatkan 1 desimal |
 | Perbandingan radius | `distance ≤ radius_m` (sama dengan radius = sah) |
 | Keputusan `terlambat` | Berdasarkan **waktu server**, bukan `captured_at` klien |
 
-Fungsi waktu & status (`nowUtc` ter-*inject*, `toWibDate`, `wibTimeOfDay`, keputusan `hadir/terlambat` + `late_minutes` per BR-15) berada di `packages/contract` sebagai fungsi murni tanpa I/O (TD-15); Express memakainya langsung, web boleh memakainya setelah migrasi TS. `haversineMeters` tetap di `apps/api`.
+Fungsi waktu & status (`nowUtc` ter-*inject*, `toWibDate`, `toWibMonth`, `wibTimeOfDay`, keputusan `hadir/terlambat` + `late_minutes` per BR-15) berada di `packages/contract` / `src/utils/wib-time.ts` sebagai fungsi murni tanpa I/O (TD-15); Express memakainya langsung, web boleh memakainya setelah migrasi TS. `haversineMeters` tetap di `apps/api`.
 
 Uji batas wajib: tepat `late_after`, 1 detik setelahnya, tepat `checkin_close`, tengah malam UTC vs WIB (tanggal WIB berbeda dari UTC antara 17:00–24:00 UTC).
 
@@ -563,7 +567,14 @@ Uji batas wajib: tepat `late_after`, 1 detik setelahnya, tepat `checkin_close`, 
 ## 6. Struktur Proyek
 
 ```text
-mclass/                              # monorepo (pnpm workspaces)
+mclass/                              # monorepo (pnpm workspaces) / backend_mclass
+├─ requirements/                     # Dokumen spesifikasi lengkap (00 s.d. 05)
+│  ├─ 00_README_HANDOFF.md
+│  ├─ 01_MRD.md
+│  ├─ 02_PRD.md
+│  ├─ 03_FSD.md
+│  ├─ 04_TRD.md
+│  └─ 05_DESIGN_SYSTEM.md
 ├─ packages/
 │  └─ contract/                      # TS murni; tanpa Node/DB/Express
 │     ├─ src/schemas/                # Zod request/response per modul (sumber OpenAPI)
@@ -572,34 +583,26 @@ mclass/                              # monorepo (pnpm workspaces)
 │     ├─ src/index.ts
 │     └─ test/
 ├─ apps/
-│  ├─ api/                           # Express + TypeScript
+│  ├─ api/ (atau root src/)          # Express + TypeScript
 │  │  ├─ prisma/                     # schema.prisma, migrations, seed
 │  │  ├─ src/
 │  │  │  ├─ server.ts                # bootstrap, graceful shutdown
 │  │  │  ├─ app.ts                   # susun middleware & routes
-│  │  │  ├─ config/env.ts            # validasi env (Zod)
-│  │  │  ├─ common/
-│  │  │  │  ├─ errors/               # AppError, error handler (kode dari contract)
-│  │  │  │  ├─ middleware/           # auth, role, rateLimit, upload, requestId, validate
-│  │  │  │  ├─ utils/                # geo.ts, pagination.ts, crypto.ts, files.ts, google-oauth.ts
-│  │  │  │  └─ storage/              # StorageProvider (local), signed URL
-│  │  │  ├─ integrations/
-│  │  │  │  ├─ ai.client.ts          # klien HTTP ke Flask (timeout, token, fail-closed)
-│  │  │  │  └─ mailer.ts
-│  │  │  ├─ modules/
-│  │  │  │  ├─ auth/  school/  face/  attendance/  leave/
-│  │  │  │  ├─ dashboard/  recap/  face-scans/
-│  │  │  │  ├─ announcement/  calendar/  notification/
-│  │  │  │  └─ profile/  report/  audit/
-│  │  │  │      └─ (tiap modul: routes · controller · service · repository · tests)
-│  │  │  ├─ jobs/                    # alpa.job.ts, cleanup.job.ts, scheduler.ts
-│  │  │  └─ scripts/                 # import-roster.ts, hash-password.ts, seed-dev.ts, set-geofence.ts
+│  │  │  ├─ config/                  # database.ts, env.ts
+│  │  │  ├─ controllers/             # auth, announcement, calendar, roster, ...
+│  │  │  ├─ services/                # auth, announcement, calendar, roster, ...
+│  │  │  ├─ routes/                  # auth, announcement, calendar, roster, ...
+│  │  │  ├─ middleware/              # auth.middleware.ts, error.middleware.ts
+│  │  │  ├─ database/                # schema.sql, migrate.ts, seed.ts, cli-user.ts
+│  │  │  ├─ utils/                   # errors.ts, jwt.ts, password.ts, google-oauth.ts, wib-time.ts, avatar-upload.ts
+│  │  │  ├─ integrations/            # ai.client.ts, mailer.ts
+│  │  │  └─ jobs/                    # alpa.job.ts, cleanup.job.ts, scheduler.ts
 │  │  └─ test/                       # integration & contract tests
 │  └─ web/                           # Vite + React (TS opsional, bertahap)
 ├─ openapi/                          # hasil generate dari skema Zod
 ├─ deploy/                           # unit systemd (api, ai), nginx.conf/Caddyfile, skrip deploy
 ├─ .env.example
-└─ package.json / pnpm-workspace.yaml
+└─ package.json
 
 mclass-ai/                           # repo/folder terpisah (Python/Flask)
 ├─ app/ (main.py, routes, face_engine.py, quality.py, schemas.py)
@@ -608,7 +611,7 @@ mclass-ai/                           # repo/folder terpisah (Python/Flask)
 mclass-mobile/                       # repo terpisah (Flutter/Dart); konsumsi openapi/
 ```
 
-**Aturan lapis:** `routes → controller → service → repository`. Controller tipis; aturan bisnis hanya di `service`; query hanya di `repository`. Modul tidak boleh mengimpor repository modul lain — lewat service. Skema Zod & kode error **hanya** didefinisikan di `packages/contract`; `apps/api` mengimpor, tidak menduplikasi. (Catatan: modul `validation/` pada draf lama diganti `face-scans/` — read-only, FSD §5.7.)
+**Aturan lapis:** `routes → controller → service → repository/database`. Controller tipis; aturan bisnis hanya di `service`. Modul `face-scans/` bersifat read-only (FSD §5.7, D-28, DS-08).
 
 ---
 
@@ -637,7 +640,7 @@ Semua request membawa header `X-Internal-Token: <AI_INTERNAL_TOKEN>`. Hanya dapa
 | `POST /v1/verify` | multipart `image` + field `references` (JSON: array embedding) | `{ "count": 1, "quality": { ... }, "similarities": [0.71, 0.66], "similarity_max": 0.71, "model": { ... } }` |
 
 `quality` minimal memuat: `blur_score`, `brightness`, `face_area_ratio`, `passed` (boolean) + `reasons[]` (mis. `TOO_BLURRY`, `TOO_DARK`, `FACE_TOO_SMALL`).
-Error AI: HTTP 4xx/5xx dengan `{ "error": { "code": "...", "message": "..." } }`. Express memetakan: `count == 0` → `NO_FACE`; `count > 1` → `MULTIPLE_FACES`; `quality.passed == false` → `LOW_QUALITY`; timeout/5xx → `AI_UNAVAILABLE` (503).
+Error AI: HTTP 4xx/5xx dengan `{ "error": { "code": "...", "message": "..." } }`. Express memetakan ke enum `face_result` (`05_DESIGN_SYSTEM.md` §7.2): `count == 0` → `NO_FACE` (`no_face`); `count > 1` → `MULTIPLE_FACES` (`multiple_faces`); `quality.passed == false` → `LOW_QUALITY` (`low_quality`); timeout/5xx → `AI_UNAVAILABLE` (`error`, 503).
 
 ### 7.3 Pemilihan model
 
@@ -678,12 +681,12 @@ Semua job: ambil `GET_LOCK('mclass_job_<nama>', 0)`; lanjut hanya jika berhasil;
 ## 9. Keamanan
 
 ### 9.1 Autentikasi, OAuth Mobile, & Sesi
-- JWT HS256 (rahasia ≥ 256-bit); klaim: `sub`, `role`, `jti`, `iat`, `exp`. Setiap request terautentikasi memeriksa `auth_sessions` (jti ada, belum dicabut, belum kedaluwarsa) dan `users.status = active`; perbarui `last_active_at` (maks 1×/menit). `role` ∈ `admin|guru|siswa`; guard `requireRole(...)` bersifat eksplisit per endpoint (admin diberi akses pada endpoint staf & endpoint khusus admin). Akun yang dihapus/dinonaktifkan di DB langsung gagal pada pemeriksaan sesi.
+- JWT HS256 (rahasia ≥ 256-bit); klaim: `sub`, `role`, `jti`, `iat`, `exp`. Setiap request terautentikasi memeriksa `auth_sessions` (`user_sessions`) (jti ada, belum dicabut, belum kedaluwarsa) dan akun aktif; perbarui `last_active_at` (maks 1×/menit). `role` ∈ `admin|guru|siswa`; guard `requireRole(...)` / `authorizeRoles(...)` bersifat eksplisit per endpoint (admin diberi akses pada endpoint staf & endpoint khusus admin). Akun yang dihapus/dinonaktifkan di DB langsung gagal pada pemeriksaan sesi.
 - **Verifikasi Google OAuth (`POST /api/auth/oauth/google`):**
   - Server **tidak pernah** mempercayai `email` atau `google_id` mentah dari body klien; klien wajib mengirim `id_token` yang ditandatangani Google.
   - Server memverifikasi `id_token` terhadap Google (`iss ∈ {'accounts.google.com', 'https://accounts.google.com'}`, `exp > now`, `email_verified == true`, serta `aud` sesuai `GOOGLE_CLIENT_ID` yang dikonfigurasi).
   - Hanya mengizinkan `role = 'siswa'`. Jika email milik akun `admin`/`guru`, tolak dengan 403 `ROLE_NOT_ALLOWED`.
-- Pesan error login generik (BR-03); *timing* disamakan (jalankan hash pembanding palsu bila user tidak ada).
+- Pesan error login generik (`"Login gagal! Email atau kata sandi salah."`, BR-03, `05_DESIGN_SYSTEM.md` §8.2); *timing* disamakan (jalankan hash pembanding palsu bila user tidak ada).
 - Logout & ganti sandi mencabut sesi (BR-05).
 
 ### 9.2 Rate limiting (`USULAN`)
@@ -698,21 +701,21 @@ Semua job: ambil `GET_LOCK('mclass_job_<nama>', 0)`; lanjut hanya jika berhasil;
 | Global | 300/menit/IP |
 
 ### 9.3 Validasi & injeksi
-- Semua input lewat Zod `strict()` (tolak field tak dikenal → cegah *mass assignment*).
-- Query terparameter (Prisma / `$queryRaw` dengan tagged template); tidak ada konkatenasi string SQL.
+- Semua input divalidasi ketat (tolak field tak dikenal → cegah *mass assignment*).
+- Query terparameter (`mysql2` `?` placeholders / Prisma); tidak ada konkatenasi string SQL.
 - Output tidak pernah menyertakan `password_hash`, `otp_hash`, embedding, path file internal.
 
 ### 9.4 Header & CORS
 - `helmet` default; HSTS di proxy. CORS hanya `CORS_ORIGINS` (mobile native tidak butuh CORS).
-- `Content-Type` ketat; `express.json({ limit })` kecil (mis. 100 KB) kecuali route upload.
+- `Content-Type` ketat; batas ukuran body JSON terukur.
 
 ### 9.5 File
 - Nama file acak (UUID) + folder per jenis; **tidak** pernah memakai nama dari klien; cegah *path traversal*.
-- Verifikasi *magic bytes*; proses ulang gambar dengan `sharp` (buang metadata/EXIF GPS).
+- Verifikasi *magic bytes* (JPG/PNG/WebP untuk avatar ≤ 2 MB; PDF/JPG/PNG untuk lampiran izin ≤ 5 MB); proses ulang gambar dengan `sharp` (buang metadata/EXIF GPS).
 - **URL bertanda tangan:** `GET /api/files/<jenis>/<id>?exp=<unix>&sig=<HMAC-SHA256(jenis|id|exp)>`; kedaluwarsa `FILE_URL_TTL`; perbandingan *constant-time*. Pembuat URL memastikan pemanggil berhak atas file itu **saat URL dibuat**.
 - Lampiran izin & foto presensi hanya terlihat oleh: pemilik (siswa) dan staf (`admin`/`guru`).
 
-### 9.6 Data pribadi & biometrik
+### 9.6 Data pribadi & biometrik (`01_MRD.md` R-01 & `05_DESIGN_SYSTEM.md` DS-07)
 
 | Kontrol | Implementasi |
 |---------|--------------|
@@ -720,6 +723,7 @@ Semua job: ambil `GET_LOCK('mclass_job_<nama>', 0)`; lanjut hanya jika berhasil;
 | Minimisasi | Simpan embedding + 1 foto referensi; foto attempt dihapus sesuai retensi |
 | Enkripsi | Embedding AES-GCM (TD-08); disk/backup terenkripsi |
 | Akses | Hanya staf (`admin`/`guru`) untuk melihat foto hasil scan (read-only); akses tercatat (FSD §7) |
+| Tanpa bocoran pihak ketiga | Hapus pemanggilan `ui-avatars.com` pada FE (DS-07); gunakan foto dari API atau inisial lokal |
 | Hak penghapusan | Prosedur operasional: hapus `face_templates` + file terkait atas permintaan |
 | Logging | Tanpa sandi, token, OTP, embedding, isi foto, koordinat presisi di log umum |
 | Hukum | UU PDP No. 27/2022 memperlakukan data biometrik sebagai data pribadi spesifik, dan data anak butuh perhatian khusus — **konsultasikan dengan pihak sekolah/penasihat hukum** (OQ-09); dokumen ini bukan nasihat hukum |
@@ -735,7 +739,7 @@ Semua job: ambil `GET_LOCK('mclass_job_<nama>', 0)`; lanjut hanya jika berhasil;
 | Brute force wajah | Batas attempt/hari | — |
 | Klien dimodifikasi | Server tak mempercayai status dari klien | Play Integrity (di luar v1) |
 
-> **Risiko residu v1:** presensi wajah **otomatis tanpa peninjauan manual** — false-accept (foto/layar bagus, orang mirip) maupun false-reject (siswa sah ditolak) langsung memengaruhi rekap. Mitigasi: kalibrasi ambang dengan data pilot, multi-sampel enrollment, log scan yang dapat ditinjau admin/guru, dan keputusan OQ-10 (penanganan false-reject). Dicatat sebagai R-02/R-03 (MRD).
+> **Risiko residu v1:** presensi wajah **otomatis tanpa peninjauan manual** — false-accept (foto/layar bagus, orang mirip) maupun false-reject (siswa sah ditolak) langsung memengaruhi rekap. Mitigasi: kalibrasi ambang dengan data pilot, multi-sampel enrollment, log scan yang dapat ditinjau admin/guru, dan keputusan OQ-10 (penanganan false-reject). Dicatat sebagai R-02/R-03 (`01_MRD.md`).
 
 ### 9.8 Operasional
 - Rahasia hanya via env/secret store; tidak ada di repo. `npm audit`/Dependabot terjadwal.
@@ -761,7 +765,7 @@ Semua job: ambil `GET_LOCK('mclass_job_<nama>', 0)`; lanjut hanya jika berhasil;
 ## 11. Observabilitas
 
 - **Log:** JSON (`pino`), tiap request berisi `requestId`, `userId`, `route`, `status`, durasi; redaksi field sensitif.
-- **Health:** `GET /api/health` (db, ai). Dipakai monitor uptime & pengecekan systemd/skrip watchdog.
+- **Health:** `GET /api/health` (db, ai). Dipakai monitor uptime, pengecekan systemd/skrip watchdog, dan lencana status server pada halaman login (`05_DESIGN_SYSTEM.md` §10).
 - **Metrik minimum (log/endpoint internal):** jumlah attempt per outcome, latensi AI, jumlah job alpa terproses, error 5xx.
 - **Alert dasar:** AI down, DB down, job alpa gagal, disk hampir penuh.
 
@@ -800,8 +804,8 @@ HTTPS **wajib**: aplikasi mobile (Android memblokir cleartext secara default) da
 | Skrip | Fungsi |
 |-------|--------|
 | `import-roster <file.csv>` | Impor/upsert siswa & kelas (kolom: `nisn, nama, jenis_kelamin, kelas, nomor_absen, tanggal_lahir?, nama_wali?, no_wali?`); laporan baris gagal |
-| `hash-password` | Membaca sandi dari prompt/stdin lalu mencetak hash argon2id untuk di-*insert* manual ke `users` (akun admin/guru dikelola di database) |
-| `seed-dev` | Data dev (≈30 siswa dummy sesuai FE) — **dilarang di production** |
+| `hash-password` / `npm run user -- ...` (`src/database/cli-user.ts`) | Membaca sandi & membuat hash argon2id / mengelola akun admin/guru di database |
+| `seed-dev` (`npm run db:seed`) | Data dev (≈30 siswa dummy sesuai FE) — **dilarang di production** |
 | `set-geofence <lat> <lng> <radius>` | Atur `school_settings` sampai UI/API P1 tersedia |
 
 ---
@@ -811,7 +815,7 @@ HTTPS **wajib**: aplikasi mobile (Android memblokir cleartext secara default) da
 | Level | Cakupan | Alat |
 |-------|---------|------|
 | Unit | geo (Haversine), waktu (WIB/UTC), status hadir/terlambat, keputusan wajah (cocok / tidak cocok), bucket agregasi, aturan izin (overlap, rentang), kebijakan sandi | vitest/jest |
-| Integrasi | Tiap endpoint FSD §5: sukses, validasi, 401/403/404, kasus bisnis (termasuk OAuth Google siswa: token valid/invalid, butuh NISN, klaim NISN, tolak admin/guru); MySQL nyata | supertest + MySQL test |
+| Integrasi | Tiap endpoint FSD §5: sukses, validasi, 401/403/404, kasus bisnis (termasuk OAuth Google siswa: token valid/invalid, butuh NISN, klaim NISN, tolak admin/guru; pengumuman & kalender); MySQL nyata | supertest + MySQL test |
 | Kontrak AI | Express terhadap *mock server* Flask (respons sukses, no_face, multi-face, timeout, 5xx) + uji Flask nyata dengan gambar uji | |
 | Job | `alpa` idempoten, hari libur, izin disetujui, catch-up | |
 | Keamanan | Akses lintas-siswa → 404; role salah → 403 (guru ditolak di endpoint 🛡 admin; admin/guru ditolak di endpoint siswa & OAuth mobile); akun dihapus → token ditolak; rate limit; unggah berkas berbahaya; URL bertanda tangan kedaluwarsa | |
@@ -826,26 +830,26 @@ Target cakupan `USULAN`: ≥ 80% baris pada modul aturan bisnis (attendance, lea
 
 ## 14. Roadmap Implementasi (Milestone)
 
-> Ukuran relatif: **S** kecil · **M** sedang · **L** besar. Kerjakan berurutan; tiap milestone berakhir dengan *exit criteria* yang teruji. FE mengintegrasikan paralel (kolom "FE").
+> Ukuran relatif: **S** kecil · **M** sedang · **L** besar. Kerjakan berurutan; tiap milestone berakhir dengan *exit criteria* yang teruji. FE mengintegrasikan paralel (kolom "FE & Design System").
 
-| M | Nama | Isi | FE terkait | Ukuran | Exit criteria |
-|---|------|-----|-----------|:------:|---------------|
-| **M0** | Fondasi | Monorepo (pnpm), paket `contract` (Zod, error, waktu WIB), `schema.prisma` (15 tabel), env Zod, skrip dev lokal & unit systemd (api/ai stub), migrasi baseline (§4.2), error handler & kode error, request-id, logging, health, CI, OpenAPI skeleton | — | M | service `api` dan `ai` berjalan via systemd/skrip dev; `/api/health` hijau; migrasi & seed berjalan; `contract` lulus `tsc --strict` + unit test; OpenAPI ter-generate |
-| **M1** | Auth & Sesi | Login admin/guru (`/auth/admin/login`), siswa/admin-mobile (`/auth/login`; `guru` ditolak 403), **login Google OAuth siswa mobile (`/auth/oauth/google` + tautan NISN)**, register **siswa**, OTP lupa sandi (**siswa**, SMTP), logout, sesi, guard role (`admin`/`guru`/`siswa`), `/me` GET/PATCH, ganti sandi, avatar, daftar sesi, rate limit, helper `hash-password` | FC-01, FC-02 (hapus halaman register & lupa sandi web), FC-04, Mobile Google Sign-In | L | Login web & OAuth mobile siswa berjalan; US-01…06 (termasuk US-02B), 62, 70 lulus uji |
-| **M2** | Data Induk & Konfigurasi | `classes`, import roster CLI, `school_settings`, `attendance_schedules`, util hari sekolah/libur, `GET /school/config`, seed akun admin/guru di DB (`hash-password`) | FC-07 (koordinat dari API) | M | Roster 30 siswa ter-impor; konfigurasi terbaca klien |
+| M | Nama | Isi | FE & Design System (`00` §8, `05` §12) | Ukuran | Exit criteria |
+|---|------|-----|---------------------------------------|:------:|---------------|
+| **M0** | Fondasi | Monorepo/workspace, paket `contract` (Zod, error, waktu WIB), skema DB (15 tabel), env, skrip dev lokal & unit systemd (api/ai stub), migrasi baseline (§4.2), error handler & kode error, request-id, logging, health, CI, OpenAPI skeleton | DS-01, DS-02, DS-04 (token warna & tema) | M | service `api` dan `ai` berjalan; `/api/health` hijau; migrasi & seed berjalan; `tsc` lulus |
+| **M1** | Auth & Sesi | Login admin/guru (`/auth/admin/login`), siswa/admin-mobile (`/auth/login`; `guru` ditolak 403), **login Google OAuth siswa mobile (`/auth/oauth/google` + tautan NISN)**, register **siswa**, OTP lupa sandi (**siswa**, SMTP), logout, sesi, guard role (`admin`/`guru`/`siswa`), `/me` GET/PATCH, ganti sandi, avatar, daftar sesi, rate limit, helper `hash-password` / `cli-user` | FC-01, FC-02, DS-08 (hapus halaman register & lupa sandi web), FC-04, Mobile Google Sign-In | L | Login web & OAuth mobile siswa berjalan; US-01…06 (termasuk US-02B), 62, 70 lulus uji |
+| **M2** | Data Induk & Konfigurasi | `classes`, import roster CLI & `/api/roster`, `school_settings`, `attendance_schedules`, util hari sekolah/libur, `GET /school/config`, seed akun admin/guru di DB | FC-07 (koordinat dari API), DS-05 (nama sekolah dari `school/config`) | M | Roster 30 siswa ter-impor; konfigurasi terbaca klien |
 | **M3** | Wajah & Presensi Inti | Klien AI, Flask (detect/embed/verify), enrollment, check-in (geofence, jendela, mock, keputusan wajah satu ambang → langsung tercatat), attempts, late-reason, `today`, riwayat; layanan notifikasi (insert-only) | FC-07, FC-08, FC-09 | L | Presensi end-to-end di perangkat nyata; invarian 2,4,5 lulus |
 | **M4** | Surat Izin | Ajukan, daftar/detail, lampiran, batal, review, efek ke presensi, notifikasi | FC-05 | M | US-20/21 lulus; BR-25/27 teruji |
-| **M5** | Monitoring & Hasil Scan | `dashboard/summary`, `recap/*`, `recap/location`, `face-scans*` (read-only), **job alpa** + catch-up | FC-03, FC-06 | L | Angka dashboard konsisten (invarian 1); alpa idempoten |
-| **M6** | Pengumuman, Kalender, Notifikasi | CRUD pengumuman, `calendar/*`, endpoint notifikasi (list/read/read-all/unread-count), pemicu BR-50 | FC-03 | M | US-50…52, 60 lulus |
-| **M7** | Laporan & Profil | Export Excel, PDF bulanan, profil siswa, wali kelas | — | M | Excel & PDF sesuai data; US-30/31/44/61 lulus |
-| **M8** | Hardening & Kesiapan Pilot | Tinjauan keamanan (§9), uji beban, backup/restore teruji, retensi job, kalibrasi threshold, checklist go-live, dokumentasi operasional | — | M | Semua uji lulus; UAT lapangan disetujui; OQ P0 tertutup |
+| **M5** | Monitoring & Hasil Scan | `dashboard/summary`, `recap/*`, `recap/location`, `face-scans*` (read-only), **job alpa** + catch-up | FC-03, FC-06, DS-07 (hapus `ui-avatars.com`), DS-08 (read-only scan wajah) | L | Angka dashboard konsisten (invarian 1); alpa idempoten |
+| **M6** | Pengumuman, Kalender, Notifikasi | CRUD pengumuman, `calendar/events`, `calendar/summary`, `calendar/attendance`, endpoint notifikasi (list/read/read-all/unread-count), pemicu BR-50 | FC-03 | M | US-50…52, 60 lulus |
+| **M7** | Laporan & Profil | Export Excel (label baku **"Alpa"** DS-03), PDF bulanan, profil siswa, wali kelas | DS-03 | M | Excel & PDF sesuai data; US-30/31/44/61 lulus |
+| **M8** | Hardening & Kesiapan Pilot | Tinjauan keamanan (§9), uji beban, backup/restore teruji, retensi job, kalibrasi threshold, checklist go-live, dokumentasi operasional | DS-06 (audit aksesibilitas dasar) | M | Semua uji lulus; UAT lapangan disetujui; OQ P0 tertutup |
 | **P1** | Setelah pilot | FCM, hapus sesi lain, API geofence/jadwal, reset enrollment | — | — | Berdasarkan evaluasi pilot |
 
 **Ketergantungan penting:** notifikasi (insert) dipakai sejak M3 → buat `NotificationService` kecil di M3, endpoint baca di M6. Job alpa (M5) bergantung pada izin (M4) dan jadwal/libur (M2).
 
 ### 14.1 Checklist Go-Live (ringkas)
-- [ ] Koordinat & radius resmi terisi & diuji di lapangan
-- [ ] Jadwal presensi 7 hari terisi
+- [ ] Koordinat & radius resmi terisi & diuji di lapangan (`school_settings`)
+- [ ] Jadwal presensi 7 hari terisi (`attendance_schedules`)
 - [ ] Roster ter-impor; akun admin/guru dibuat di DB; wali kelas di-assign (`classes.homeroom_teacher_id`)
 - [ ] `GOOGLE_CLIENT_ID` (SHA-1 signing certificate Android / iOS / Web client ID) terdaftar di Google Cloud Console & `.env`
 - [ ] Threshold wajah dikalibrasi & dicatat
@@ -853,6 +857,7 @@ Target cakupan `USULAN`: ≥ 80% baris pada modul aturan bisnis (attendance, lea
 - [ ] HTTPS valid; CORS hanya origin web
 - [ ] Backup & restore teruji
 - [ ] Persetujuan biometrik terdokumentasi (OQ-09)
+- [ ] Perubahan FE (`FC-01`…`FC-09`) & Design System (`DS-05`, `DS-07`, `DS-08`) terverifikasi
 - [ ] Rahasia produksi diganti; `seed-dev` dinonaktifkan
 
 ---
@@ -864,10 +869,10 @@ Target cakupan `USULAN`: ≥ 80% baris pada modul aturan bisnis (attendance, lea
 3. Role hanya `admin`, `guru`, `siswa` — tidak menambah role lain, integrasi WhatsApp, reverse geocoding, atau layanan pihak ketiga di luar daftar (SMTP & Google OAuth mobile siswa) tanpa keputusan baru (`D-xx`).
 4. Nilai ambang & jam tidak di-hardcode; semua melalui konfigurasi.
 5. Setiap perubahan keputusan dicatat di `00_README_HANDOFF.md` (Decision Log).
-6. **Stack terkunci:** Express+TypeScript+MySQL (Prisma) · Flask (internal) · Flutter · Vite/React. Tidak mengganti Flutter dengan React Native, tidak memindahkan face recognition ke Node, tidak menambah database/antrian/layanan baru tanpa `D-xx`/`TD-xx` baru.
+6. **Stack terkunci:** Express+TypeScript+MySQL · Flask (internal) · Flutter · Vite/React. Tidak mengganti Flutter dengan React Native, tidak memindahkan face recognition ke Node, tidak menambah database/antrian/layanan baru tanpa `D-xx`/`TD-xx` baru.
 7. **Flutter tidak memakai paket TypeScript.** Berbagi kontrak ke mobile hanya lewat OpenAPI.
 8. Tidak memperkenalkan Docker/Kubernetes/antrian baru tanpa keputusan `TD-xx` baru (TD-17).
-9. Skema Zod, kode error, dan logika waktu **satu sumber** (`packages/contract`); dilarang menduplikasi di `apps/api` atau `apps/web`.
+9. Kontrak semantik enum, label, dan format data mengacu pada `05_DESIGN_SYSTEM.md` §7–§9.
 10. Pekerjaan di luar daftar milestone §14 tidak dikerjakan sebelum dokumen diperbarui.
 
 ---
@@ -879,9 +884,9 @@ Target cakupan `USULAN`: ≥ 80% baris pada modul aturan bisnis (attendance, lea
 | TR-01 | Latensi AI di CPU lambat saat gelombang presensi | Presensi lambat/timeout | Pra-cek; resize di klien; worker >1; ukur di M8; opsi GPU bila perlu |
 | TR-02 | Akurasi wajah rendah (pencahayaan, kamera murah, wajah remaja berubah) | False reject/accept **langsung berdampak ke rekap** (tanpa review manual) | Multi-sampel enrollment; kalibrasi ambang; enrollment ulang berkala; log scan untuk tinjauan; OQ-10 |
 | TR-03 | GPS indoor tidak akurat vs radius 50 m | Penolakan sah | Ambang akurasi; panduan GPS; OQ-10 |
-| TR-04 | Kontrak FE–BE melenceng | Integrasi gagal | OpenAPI + contract test; Change List FE |
+| TR-04 | Kontrak FE–BE melenceng | Integrasi gagal | OpenAPI + contract test; Change List FE (`00_README_HANDOFF.md` §8) & `05_DESIGN_SYSTEM.md` §7 |
 | TR-05 | Pergantian model AI | Embedding tak kompatibel | Simpan versi; rencana re-enrollment |
-| TR-06 | Kebocoran file/foto | Pelanggaran privasi | URL bertanda tangan, penyimpanan privat, audit akses |
+| TR-06 | Kebocoran file/foto | Pelanggaran privasi | URL bertanda tangan, penyimpanan privat, audit akses, hapus `ui-avatars.com` (DS-07) |
 | TR-07 | Server tunggal mati | Layanan berhenti | Backup, healthcheck, restart otomatis; RTO terdefinisi |
 | TR-08 | Zona waktu/hari berganti (UTC vs WIB) | Status/rekap salah | TD-03 + uji batas tengah malam |
 | TR-09 | Tidak ada peninjauan manual: siswa sah yang gagal verifikasi berujung alpa | Tinggi | Kalibrasi + multi-sampel; keputusan OQ-10 (mekanisme koreksi); liveness P1 |
@@ -890,14 +895,13 @@ Target cakupan `USULAN`: ≥ 80% baris pada modul aturan bisnis (attendance, lea
 
 ## 17. Status Artefak (checkpoint kelanjutan)
 
-> Dicatat dari laporan pemilik proyek; **belum diverifikasi ulang** dalam dokumen ini. Verifikasi ulang (`tsc --strict`, `prisma validate`, unit test) saat M0.
-
 | Artefak | Status | Catatan |
 |---------|:------:|---------|
-| `schema.prisma` — 15 tabel P0, 19 relasi | Selesai, lolos `prisma validate`; ERD valid | `device_tokens` (P1) di luar 15 tabel; kolom `google_id` & `oauth_provider` pada `users` |
-| Kontrak Zod (`packages/contract`) | Selesai, lolos `tsc --strict` + uji | Menjadi sumber OpenAPI |
-| Logika waktu WIB + status terlambat | Selesai, lolos `tsc --strict` + uji | Pindahkan/pertahankan di `contract` (TD-15) |
+| Dokumen Requirements (`00_README_HANDOFF.md` s.d. `05_DESIGN_SYSTEM.md`) | ✅ Selesai | Lengkap di `requirements/`, selaras v1.2–v1.4 |
+| Skema Database & Migrasi (`src/database/schema.sql`, `migrate.ts`, `seed.ts`) | ✅ Berjalan | Mencakup `users` (dengan `google_id` & `oauth_provider`), `classes`, `student_roster`, `user_sessions`, `announcements`, `school_settings`, `attendance_schedules`, `attendance_records` |
+| Modul Auth, Profil, Avatar, Sesi, & Google OAuth Siswa (`src/services/auth.service.ts`) | ✅ Selesai | US-01, US-02, US-02B, US-03, US-04, US-06, US-61, US-62 |
+| Modul Pengumuman & Kalender (`src/services/announcement.service.ts`, `calendar.service.ts`) | ✅ Selesai | US-13, US-30, US-50, US-51, US-52 |
 | Mesin wajah in-process (Node) | **Dibatalkan** | Diganti Flask (TD-16) |
 | Paket TS bersama untuk Flutter | **Dibatalkan** | Diganti OpenAPI (TD-13) |
 
-**Langkah berikutnya (urutan):** M0 → M1 → … sesuai §14. Jika sesi terputus, lanjutkan dari milestone pertama yang *exit criteria*-nya belum teruji; jangan memulai ulang dari awal.
+**Langkah berikutnya (urutan):** Lanjutkan modul presensi wajah & surat izin sesuai Milestone §14. Jika sesi terputus, lanjutkan dari milestone pertama yang *exit criteria*-nya belum teruji; jangan memulai ulang dari awal.

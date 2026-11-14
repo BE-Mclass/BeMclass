@@ -28,10 +28,12 @@ export interface StudentProfile {
 
 export interface AuthenticatedUser {
   id: number;
+  staff_code?: string;
   name: string;
   email: string;
   role: UserRole;
   photo_url: string | null;
+  avatar_url?: string | null;
   student?: StudentProfile;
 }
 

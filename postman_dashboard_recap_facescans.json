@@ -1,0 +1,231 @@
+{
+  "info": {
+    "name": "M-Class API — Attendance, Face Scans, Dashboard & Recap",
+    "_postman_id": "a9c18a30-7c4e-4d1b-9f00-mclass2026",
+    "description": "Koleksi Postman untuk mengetes Presensi Masuk, Alasan Terlambat, Hasil Scan Wajah (Read-Only), serta Dashboard & Rekap Kelas Web.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "studentToken",
+      "value": "ISI_DENGAN_ACCESS_TOKEN_SISWA"
+    },
+    {
+      "key": "staffToken",
+      "value": "ISI_DENGAN_ACCESS_TOKEN_ADMIN_ATAU_GURU"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Auth Login (Ambil Token)",
+      "item": [
+        {
+          "name": "POST /api/auth/admin/login (Admin / Guru)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@mclass.sch.id\",\n  \"password\": \"Admin123!\",\n  \"remember\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/admin/login"
+          }
+        },
+        {
+          "name": "POST /api/auth/mobile/login (Siswa)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identity\": \"0012345678\",\n  \"password\": \"Siswa123!\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/mobile/login"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Presensi Masuk & Alasan Terlambat (Role: Siswa)",
+      "item": [
+        {
+          "name": "POST /api/attendance/check-in (Multipart Form-Data)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{studentToken}}" },
+              { "key": "X-Mock-AI", "value": "true" },
+              { "key": "X-Mock-Time", "value": "07:30" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "photo", "type": "file", "src": "" },
+                { "key": "latitude", "value": "-7.889800", "type": "text" },
+                { "key": "longitude", "value": "112.663200", "type": "text" },
+                { "key": "accuracy_m", "value": "5.2", "type": "text" },
+                { "key": "is_mocked", "value": "false", "type": "text" },
+                { "key": "device", "value": "Android 14; Redmi Note 12", "type": "text" }
+              ]
+            },
+            "url": "{{baseUrl}}/api/attendance/check-in"
+          }
+        },
+        {
+          "name": "PATCH /api/attendance/:id/late-reason (JSON)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{studentToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"macet\",\n  \"note\": \"Ada perbaikan jembatan di Jl. Diponegoro\"\n}"
+            },
+            "url": "{{baseUrl}}/api/attendance/1/late-reason"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Hasil Scan Wajah Read-Only (Role: Admin / Guru)",
+      "item": [
+        {
+          "name": "GET /api/face-scans (Daftar Scan Wajah)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{staffToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/face-scans?date=all&page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "face-scans"],
+              "query": [
+                { "key": "date", "value": "all", "description": "YYYY-MM-DD atau 'all' (default: hari ini WIB)" },
+                { "key": "class_id", "value": "1", "disabled": true },
+                { "key": "nisn", "value": "0012345678", "disabled": true },
+                { "key": "result", "value": "match", "disabled": true, "description": "match | no_match | no_face | multiple_faces | low_quality | error" },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/face-scans/:scanId (Detail Scan Wajah + Audit Log)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{staffToken}}" }
+            ],
+            "url": "{{baseUrl}}/api/face-scans/1"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Dashboard & Rekap Kelas Web (Role: Admin / Guru)",
+      "item": [
+        {
+          "name": "GET /api/dashboard/summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{staffToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/summary?date=2026-11-14",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "summary"],
+              "query": [
+                { "key": "date", "value": "2026-11-14", "description": "Opsional YYYY-MM-DD (default: hari ini WIB)" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/recap/overview",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{staffToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/recap/overview?from=2026-11-14&to=2026-11-14",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "recap", "overview"],
+              "query": [
+                { "key": "from", "value": "2026-11-14" },
+                { "key": "to", "value": "2026-11-14" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/recap/classes",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{staffToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/recap/classes?from=2026-11-14&to=2026-11-14",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "recap", "classes"],
+              "query": [
+                { "key": "from", "value": "2026-11-14" },
+                { "key": "to", "value": "2026-11-14" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/recap/classes/:classId",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{staffToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/recap/classes/1?date=2026-11-14",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "recap", "classes", "1"],
+              "query": [
+                { "key": "date", "value": "2026-11-14" },
+                { "key": "q", "value": "0012", "disabled": true, "description": "Cari nama atau NISN siswa" },
+                { "key": "status", "value": "terlambat", "disabled": true, "description": "hadir | terlambat | izin | sakit | alpa | belum_hadir" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/recap/location",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{staffToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/recap/location?date=2026-11-14",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "recap", "location"],
+              "query": [
+                { "key": "date", "value": "2026-11-14" }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

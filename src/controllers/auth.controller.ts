@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from "express";
+import { AuditService } from "../services/audit.service";
 import {
   changePassword,
+  deleteUserAvatar,
   listUserSessions,
   loginMobile,
   loginStudentGoogleOAuth,
@@ -8,7 +10,14 @@ import {
   logoutSession,
   registerStudent,
   updateProfile,
+  updateUserAvatar,
 } from "../services/auth.service";
+import {
+  completePasswordReset,
+  requestPasswordResetOtp,
+  verifyPasswordResetOtp,
+} from "../services/password-reset.service";
+import { extractAvatarUpload } from "../utils/avatar-upload";
 import { AppError } from "../utils/errors";
 
 function getClientIp(req: Request): string {
@@ -29,22 +38,46 @@ export async function handleWebLogin(
   next: NextFunction
 ): Promise<void> {
   try {
-    const { email, password, remember_me, rememberMe } = req.body ?? {};
+    const { email, identity, password, remember_me, rememberMe } = req.body ?? {};
+    const loginEmail = email ?? identity ?? "";
 
     const result = await loginWeb({
-      email,
+      email: loginEmail,
       password,
       rememberMe: remember_me ?? rememberMe,
       userAgent: req.headers["user-agent"],
       ipAddress: getClientIp(req),
     });
 
+    await AuditService.logSafe({
+      actorUserId: result.user.id,
+      action: "auth.staff_login.success",
+      entity: "users",
+      entityId: result.user.id,
+      meta: {
+        email: result.user.email,
+        role: result.user.role,
+      },
+      ip: getClientIp(req),
+    });
+
     res.status(200).json({
       success: true,
       message: "Login berhasil.",
+      token: result.token,
+      user: result.user,
       data: result,
     });
   } catch (error) {
+    await AuditService.logSafe({
+      actorUserId: null,
+      action: "auth.staff_login.failed",
+      entity: "users",
+      meta: {
+        email: String(req.body?.email ?? req.body?.identity ?? ""),
+      },
+      ip: getClientIp(req),
+    });
     next(error);
   }
 }
@@ -216,8 +249,8 @@ export async function handleGetMe(
 }
 
 /**
- * PATCH /api/auth/profile
- * US-61 & US-62 — Memperbarui profil akun yang sedang login
+ * PATCH /api/auth/profile & PATCH /api/auth/me
+ * US-61 & US-62 — Memperbarui profil akun yang sedang login (termasuk kata sandi baru opsional pada form profil web)
  */
 export async function handleUpdateProfile(
   req: Request,
@@ -229,12 +262,72 @@ export async function handleUpdateProfile(
       throw new AppError("Sesi tidak ditemukan.", 401);
     }
 
-    const updatedUser = await updateProfile(req.auth.user, req.body ?? {});
+    const updatedUser = await updateProfile(
+      req.auth.user,
+      req.body ?? {},
+      req.auth.sessionId
+    );
 
     res.status(200).json({
       success: true,
       message: "Profil berhasil diperbarui.",
       data: updatedUser,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/auth/me/avatar & POST /api/auth/avatar
+ * US-62 AC2 — Mengunggah / mengganti foto profil (JPG/PNG/WebP)
+ */
+export async function handleUploadAvatar(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    if (!req.auth) {
+      throw new AppError("Sesi tidak ditemukan.", 401);
+    }
+
+    const { buffer, ext } = await extractAvatarUpload(req);
+    const result = await updateUserAvatar(req.auth.user.id, buffer, ext);
+
+    res.status(200).json({
+      success: true,
+      message: "Foto profil berhasil diperbarui.",
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * DELETE /api/auth/me/avatar & DELETE /api/auth/avatar
+ * US-62 AC2 — Menghapus foto profil
+ */
+export async function handleDeleteAvatar(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    if (!req.auth) {
+      throw new AppError("Sesi tidak ditemukan.", 401);
+    }
+
+    await deleteUserAvatar(req.auth.user.id);
+
+    res.status(200).json({
+      success: true,
+      message: "Foto profil berhasil dihapus.",
+      data: {
+        photo_url: null,
+        avatar_url: null,
+      },
     });
   } catch (error) {
     next(error);
@@ -335,6 +428,108 @@ export async function handleRevokeSession(
     res.status(200).json({
       success: true,
       message: "Sesi berhasil dicabut.",
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/auth/forgot-password
+ * US-05 & BR-06 — Langkah 1 Lupa Sandi Siswa: Kirim OTP 6 digit ke email siswa
+ */
+export async function handleForgotPassword(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { email, identifier } = req.body ?? {};
+    const data = await requestPasswordResetOtp({
+      email: email ?? identifier,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: data.message,
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/auth/verify-otp
+ * US-05, BR-06 & BR-07 — Langkah 2 Lupa Sandi Siswa: Verifikasi OTP -> keluarkan reset_token
+ */
+export async function handleVerifyOtp(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { email, otp, code } = req.body ?? {};
+    const result = await verifyPasswordResetOtp({
+      email,
+      otp: otp ?? code,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Kode OTP berhasil diverifikasi.",
+      data: {
+        reset_token: result.reset_token,
+        expires_in: result.expires_in,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/auth/reset-password
+ * US-05, BR-05 & BR-07 — Langkah 3 Lupa Sandi Siswa: Ganti sandi dengan reset_token & cabut semua sesi
+ */
+export async function handleResetPassword(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const {
+      reset_token,
+      resetToken,
+      token,
+      new_password,
+      newPassword,
+      password,
+      password_confirmation,
+      passwordConfirmation,
+    } = req.body ?? {};
+
+    const result = await completePasswordReset({
+      resetToken: reset_token ?? resetToken ?? token,
+      newPassword: new_password ?? newPassword ?? password,
+      passwordConfirmation: password_confirmation ?? passwordConfirmation,
+    });
+
+    await AuditService.logSafe({
+      actorUserId: result.userId,
+      action: "auth.password_reset.completed",
+      entity: "users",
+      entityId: String(result.userId),
+      meta: { method: "email_otp" },
+      ip: getClientIp(req),
+    });
+
+    res.status(200).json({
+      success: true,
+      message: result.message,
+      data: {
+        message: result.message,
+      },
     });
   } catch (error) {
     next(error);

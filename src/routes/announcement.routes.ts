@@ -24,6 +24,11 @@ announcementRouter.put(
   authorizeRoles("admin", "guru"),
   handleUpdateAnnouncement
 );
+announcementRouter.patch(
+  "/:id",
+  authorizeRoles("admin", "guru"),
+  handleUpdateAnnouncement
+);
 announcementRouter.delete(
   "/:id",
   authorizeRoles("admin", "guru"),
